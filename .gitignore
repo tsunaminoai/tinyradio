@@ -1,0 +1,9 @@
+.zig-cache
+zig-out
+__pycache__
+.venv
+*.wav
+.DS_Store
+media/
+*.ndz
+*.svg

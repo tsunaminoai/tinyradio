@@ -1,0 +1,96 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.13.6/.schema/devbox.schema.json",
+  "packages": {
+    "zls":     "latest",
+    "cmake":   "latest",
+    "python3": "latest",
+    "nodejs":  "latest",
+    "git":     "latest",
+    "libGL": {
+      "version":   "latest",
+      "platforms": ["x86_64-linux", "aarch64-linux"]
+    },
+    "xorg.libX11": {
+      "version":   "latest",
+      "outputs":   ["out", "dev"],
+      "platforms": ["x86_64-linux", "aarch64-linux"]
+    },
+    "xorg.libXCursor": {
+      "version":   "latest",
+      "outputs":   ["out", "dev"],
+      "platforms": ["x86_64-linux", "aarch64-linux"]
+    },
+    "xorg.libXrandr": {
+      "version":   "latest",
+      "outputs":   ["out", "dev"],
+      "platforms": ["x86_64-linux", "aarch64-linux"]
+    },
+    "xorg.libXext": {
+      "version":   "latest",
+      "outputs":   ["out", "dev"],
+      "platforms": ["x86_64-linux", "aarch64-linux"]
+    },
+    "xorg.libXinerama": {
+      "version":   "latest",
+      "outputs":   ["out", "dev"],
+      "platforms": ["x86_64-linux", "aarch64-linux"]
+    },
+    "xorg.libXi": {
+      "version":   "latest",
+      "outputs":   ["out", "dev"],
+      "platforms": ["x86_64-linux", "aarch64-linux"]
+    },
+    "wayland-scanner": "latest",
+    "apple-sdk": {
+      "version":   "latest",
+      "platforms": ["aarch64-darwin"]
+    },
+
+    "watchexec": "latest",
+    "darwin.CF": {
+      "version":   "latest",
+      "platforms": ["aarch64-darwin"]
+    },
+    "godot_4": "latest",
+    "zig":     "latest",
+    "wayland": {
+      "version": "latest",
+      "outputs": ["dev"]
+    },
+    "libxkbcommon": {
+      "version": "latest",
+      "outputs": ["dev"]
+    },
+    "glfw": {
+      "version": "latest",
+      "outputs": ["dev"]
+    }
+  },
+  "shell": {
+    "init_hook": [
+      "echo 'Welcome to devbox!' > /dev/null"
+    ],
+    "scripts": {
+      "build": [
+        "zig build -Doptimize=ReleaseSafe",
+        "zig build docs"
+      ],
+      "test": [
+        "zig build test"
+      ],
+      "dev": [
+        "watchexec -c --exts zig -- zig build -Doptimize=Debug -freference-trace test 2>&1 | tee zig-out/test.log"
+      ],
+      "docs": [
+        "zig build docs",
+        "nix run nixpkgs#python312 -- -m http.server -d ./zig-out/docs"
+      ],
+      "run-trace": [
+        "zig build -Doptimize=Debug -freference-trace run"
+      ],
+      "run": [
+        "zig build -Doptimize=ReleaseFast run"
+      ]
+    }
+  }
+}
