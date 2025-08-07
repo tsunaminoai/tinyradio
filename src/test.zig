@@ -75,12 +75,12 @@ pub fn main() !void {
         if (rl.isKeyPressed(.up)) {
             volume += 0.1;
             if (volume > 1.0) volume = 1.0;
-            rl.setAudioStreamVolume(audio_stream, volume);
+            receiver.setGain(volume);
         }
         if (rl.isKeyPressed(.down)) {
             volume -= 0.1;
             if (volume < 0.0) volume = 0.0;
-            rl.setAudioStreamVolume(audio_stream, volume);
+            receiver.setGain(volume);
         }
 
         // Process audio if stream needs more data

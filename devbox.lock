@@ -528,6 +528,70 @@
         }
       }
     },
+    "pulseaudio@latest": {
+      "last_modified": "2025-07-28T17:09:23Z",
+      "resolved": "github:NixOS/nixpkgs/648f70160c03151bc2121d179291337ad6bc564b#pulseaudio",
+      "source": "devbox-search",
+      "version": "17.0",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/svxihdwd27z8vs7vjw77y5dkjzg7y23x-pulseaudio-17.0",
+              "default": true
+            },
+            {
+              "name": "dev",
+              "path": "/nix/store/pmhr2zvq373ij9maaz3vr9niqnywmwxp-pulseaudio-17.0-dev"
+            }
+          ],
+          "store_path": "/nix/store/svxihdwd27z8vs7vjw77y5dkjzg7y23x-pulseaudio-17.0"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/3lcy8zdzia4k810sq5wvlzsgb1fhlch9-pulseaudio-17.0",
+              "default": true
+            },
+            {
+              "name": "dev",
+              "path": "/nix/store/9y7ggv959lzqr46j83y9fikq9v0w0bx8-pulseaudio-17.0-dev"
+            }
+          ],
+          "store_path": "/nix/store/3lcy8zdzia4k810sq5wvlzsgb1fhlch9-pulseaudio-17.0"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/97sg8g4bgq7g853qxm9ziznxrk0na8wn-pulseaudio-17.0",
+              "default": true
+            },
+            {
+              "name": "dev",
+              "path": "/nix/store/j210xd0j79a0iwr776jvk6k33hwvd2wc-pulseaudio-17.0-dev"
+            }
+          ],
+          "store_path": "/nix/store/97sg8g4bgq7g853qxm9ziznxrk0na8wn-pulseaudio-17.0"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/z2hyq3gnzqxwxyc0zddlmk0vjjdbjdix-pulseaudio-17.0",
+              "default": true
+            },
+            {
+              "name": "dev",
+              "path": "/nix/store/z2khcgcn4pmyksbvmjaxsbvf0qk4x4rm-pulseaudio-17.0-dev"
+            }
+          ],
+          "store_path": "/nix/store/z2hyq3gnzqxwxyc0zddlmk0vjjdbjdix-pulseaudio-17.0"
+        }
+      }
+    },
     "python3@latest": {
       "last_modified": "2025-01-06T03:40:18Z",
       "plugin_version": "0.0.4",

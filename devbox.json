@@ -41,7 +41,7 @@
       "platforms": ["x86_64-linux", "aarch64-linux"]
     },
     "wayland-scanner": "latest",
-    "librtlsdr": "latest",
+    "librtlsdr":       "latest",
     "apple-sdk": {
       "version":   "latest",
       "platforms": ["aarch64-darwin"]
@@ -64,7 +64,8 @@
     },
     "glfw": {
       "version": "latest"
-    }
+    },
+    "pulseaudio": "latest"
   },
   "shell": {
     "init_hook": [

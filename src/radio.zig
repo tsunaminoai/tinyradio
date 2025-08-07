@@ -10,7 +10,7 @@ pub const RadioReceiver = struct {
     allocator: std.mem.Allocator,
     flowgraph: radio.Flowgraph,
     source: radio.blocks.RtlSdrSource,
-    sink: radio.blocks.ApplicationSink(f32),
+    sink: radio.blocks.PulseAudioSink(1),
 
     // FM demodulation chain
 
@@ -19,6 +19,7 @@ pub const RadioReceiver = struct {
     af_filter: radio.blocks.LowpassFilterBlock(f32, 128),
     af_deemphasis: radio.blocks.SinglepoleLowpassFilterBlock(f32),
     af_downsampler: radio.blocks.DownsamplerBlock(f32),
+    agc: radio.blocks.AGCBlock(f32),
 
     const tune_offset = -250e3;
 
@@ -33,12 +34,13 @@ pub const RadioReceiver = struct {
                     .rf_gain = 30.0,
                 },
             ),
-            .sink = radio.blocks.ApplicationSink(f32).init(),
+            .sink = radio.blocks.PulseAudioSink(1).init(),
             .tuner = radio.blocks.TunerBlock.init(tune_offset, 200e3, 4),
             .fm_demod = radio.blocks.FrequencyDiscriminatorBlock.init(75e3),
             .af_filter = radio.blocks.LowpassFilterBlock(f32, 128).init(15e3, .{}),
             .af_deemphasis = radio.blocks.FMDeemphasisFilterBlock.init(75e-6),
             .af_downsampler = radio.blocks.DownsamplerBlock(f32).init(5),
+            .agc = radio.blocks.AGCBlock(f32).init(.{ .preset = .Fast }, .{}),
         };
         // try r.connect();
         return r;
@@ -56,7 +58,8 @@ pub const RadioReceiver = struct {
     pub fn connect(self: *RadioReceiver) !void {
 
         // Connect the processing chain
-        try self.flowgraph.connect(&self.source.block, &self.tuner.block);
+        try self.flowgraph.connect(&self.source.block, &self.agc.block);
+        try self.flowgraph.connect(&self.agc.block, &self.tuner.block);
         try self.flowgraph.connect(&self.tuner.block, &self.fm_demod.block);
         try self.flowgraph.connect(&self.fm_demod.block, &self.af_filter.block);
         try self.flowgraph.connect(&self.af_filter.block, &self.af_deemphasis.block);
@@ -69,9 +72,7 @@ pub const RadioReceiver = struct {
     }
 
     pub fn setGain(self: *RadioReceiver, gain_db: f32) !void {
-        if (self.source) |source| {
-            try source.setGain(gain_db);
-        }
+        try self.source.setGain(gain_db);
     }
 
     pub fn start(self: *RadioReceiver) !void {
@@ -83,8 +84,11 @@ pub const RadioReceiver = struct {
     }
 
     pub fn getAudioSamples(self: *RadioReceiver, buffer: []f32) !usize {
+        _ = self; // autofix
+        _ = buffer; // autofix
         // Get demodulated audio samples
-        return self.sink.read(buffer);
+        // return self.sink.read(buffer);
+        return 0;
     }
 };
 
