@@ -21,7 +21,7 @@ pub const RadioReceiver = struct {
     af_downsampler: radio.blocks.DownsamplerBlock(f32),
     agc: radio.blocks.AGCBlock(f32),
 
-    const tune_offset = -250e3;
+    const tune_offset = -0e3;
 
     pub fn init(allocator: std.mem.Allocator) !RadioReceiver {
         const r = RadioReceiver{
@@ -58,8 +58,8 @@ pub const RadioReceiver = struct {
     pub fn connect(self: *RadioReceiver) !void {
 
         // Connect the processing chain
-        try self.flowgraph.connect(&self.source.block, &self.agc.block);
-        try self.flowgraph.connect(&self.agc.block, &self.tuner.block);
+        try self.flowgraph.connect(&self.source.block, &self.tuner.block);
+        // try self.flowgraph.connect(&self.agc.block, &self.tuner.block);
         try self.flowgraph.connect(&self.tuner.block, &self.fm_demod.block);
         try self.flowgraph.connect(&self.fm_demod.block, &self.af_filter.block);
         try self.flowgraph.connect(&self.af_filter.block, &self.af_deemphasis.block);

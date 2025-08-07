@@ -47,7 +47,7 @@ pub fn main() !void {
     var audio_buffer: [BUFFER_SIZE]i16 = undefined;
 
     // State variables
-    var frequency: f32 = 91.99; // Starting frequency in MHz
+    var frequency: f32 = 93.5; // Starting frequency in MHz
     var volume: f32 = 0.5;
     // var is_running = true;
     // _ = is_running; // autofix
