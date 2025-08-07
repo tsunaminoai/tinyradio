@@ -12,6 +12,13 @@ pub fn build(b: *std.Build) void {
     const raygui = raylib_dep.module("raygui"); // raygui module
     const raylib_artifact = raylib_dep.artifact("raylib"); // raylib C library
 
+    const test_app = b.addExecutable(.{
+        .name = "tinierradio",
+        .root_source_file = b.path("src/test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -31,6 +38,15 @@ pub fn build(b: *std.Build) void {
     exe.linkLibC();
     exe.linkLibrary(raylib_artifact);
     b.installArtifact(exe);
+
+    test_app.root_module.addImport("radio", radio.module("radio"));
+    test_app.root_module.addImport("raylib", raylib);
+    test_app.root_module.addImport("raygui", raygui);
+    test_app.addLibraryPath(b.path(".devbox/nix/profile/default/lib"));
+    test_app.addSystemIncludePath(b.path(".devbox/nix/profile/default/include"));
+    test_app.linkLibC();
+    test_app.linkLibrary(raylib_artifact);
+    b.installArtifact(test_app);
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());

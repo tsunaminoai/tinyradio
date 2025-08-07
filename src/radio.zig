@@ -65,9 +65,7 @@ pub const RadioReceiver = struct {
     }
 
     pub fn setFrequency(self: *RadioReceiver, freq_mhz: f32) !void {
-        if (self.source) |source| {
-            try source.setFrequency(freq_mhz * 1e6);
-        }
+        try self.source.setFrequency(freq_mhz * 1e6);
     }
 
     pub fn setGain(self: *RadioReceiver, gain_db: f32) !void {
@@ -86,10 +84,7 @@ pub const RadioReceiver = struct {
 
     pub fn getAudioSamples(self: *RadioReceiver, buffer: []f32) !usize {
         // Get demodulated audio samples
-        if (self.sink) |sink| {
-            return try sink.read(buffer);
-        }
-        return 0;
+        return self.sink.read(buffer);
     }
 };
 
