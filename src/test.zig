@@ -47,7 +47,7 @@ pub fn main() !void {
     var audio_buffer: [BUFFER_SIZE]i16 = undefined;
 
     // State variables
-    var frequency: f32 = 88.5; // Starting frequency in MHz
+    var frequency: f32 = 91.99; // Starting frequency in MHz
     var volume: f32 = 0.5;
     // var is_running = true;
     // _ = is_running; // autofix
@@ -75,12 +75,12 @@ pub fn main() !void {
         if (rl.isKeyPressed(.up)) {
             volume += 0.1;
             if (volume > 1.0) volume = 1.0;
-            receiver.setGain(volume);
+            try receiver.setGain(volume);
         }
         if (rl.isKeyPressed(.down)) {
             volume -= 0.1;
             if (volume < 0.0) volume = 0.0;
-            receiver.setGain(volume);
+            try receiver.setGain(volume);
         }
 
         // Process audio if stream needs more data

@@ -72,7 +72,9 @@ pub const RadioReceiver = struct {
     }
 
     pub fn setGain(self: *RadioReceiver, gain_db: f32) !void {
-        try self.source.setGain(gain_db);
+        _ = self; // autofix
+        _ = gain_db; // autofix
+        // try self.source.setGain(gain_db);
     }
 
     pub fn start(self: *RadioReceiver) !void {
