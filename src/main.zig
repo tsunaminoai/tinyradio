@@ -569,3 +569,8 @@ fn drawBottomControls(state: *RadioState, w: f32) void {
         rl.drawText("RTL-SDR: Disconnected", 10, y_base + 50, 12, rl.Color.dark_gray);
     }
 }
+
+test {
+    _ = @import("radio.zig");
+    tst.refAllDecls(@This());
+}

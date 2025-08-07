@@ -28,7 +28,6 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("raygui", raygui);
     exe.addLibraryPath(b.path(".devbox/nix/profile/default/lib"));
     exe.addSystemIncludePath(b.path(".devbox/nix/profile/default/include"));
-    // exe.addIncludePath(b.path(".devbox/nix/profile/default/include"));
     exe.linkLibC();
     exe.linkLibrary(raylib_artifact);
     b.installArtifact(exe);
@@ -43,8 +42,15 @@ pub fn build(b: *std.Build) void {
 
     const exe_unit_tests = b.addTest(.{
         .root_module = exe_mod,
+        .use_lld = false,
     });
-
+    exe_unit_tests.root_module.addImport("radio", radio.module("radio"));
+    exe_unit_tests.root_module.addImport("raylib", raylib);
+    exe_unit_tests.root_module.addImport("raygui", raygui);
+    exe_unit_tests.addLibraryPath(b.path(".devbox/nix/profile/default/lib"));
+    exe_unit_tests.addSystemIncludePath(b.path(".devbox/nix/profile/default/include"));
+    exe_unit_tests.linkLibC();
+    exe_unit_tests.linkLibrary(raylib_artifact);
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_exe_unit_tests.step);

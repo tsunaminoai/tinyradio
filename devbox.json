@@ -41,6 +41,7 @@
       "platforms": ["x86_64-linux", "aarch64-linux"]
     },
     "wayland-scanner": "latest",
+    "librtlsdr": "latest",
     "apple-sdk": {
       "version":   "latest",
       "platforms": ["aarch64-darwin"]
@@ -62,8 +63,7 @@
       "outputs": ["dev"]
     },
     "glfw": {
-      "version": "latest",
-      "outputs": ["dev"]
+      "version": "latest"
     }
   },
   "shell": {

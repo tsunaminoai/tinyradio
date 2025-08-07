@@ -319,6 +319,54 @@
         }
       }
     },
+    "librtlsdr@latest": {
+      "last_modified": "2023-02-14T00:52:29Z",
+      "resolved": "github:NixOS/nixpkgs/0a25e2c87e784bf7e06e7833ec0e06d34836959a#librtlsdr",
+      "source": "devbox-search",
+      "version": "0.8.0",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/a47anlqjwc0c2pc56g3pka6jqqfljsnv-librtlsdr-0.8.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/a47anlqjwc0c2pc56g3pka6jqqfljsnv-librtlsdr-0.8.0"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/br4v33qpl9fc1vjwwld417j03cjk10l0-librtlsdr-0.8.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/br4v33qpl9fc1vjwwld417j03cjk10l0-librtlsdr-0.8.0"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/6c5andpdkbk4gadr6rqip5cbnm4s93sf-librtlsdr-0.8.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/6c5andpdkbk4gadr6rqip5cbnm4s93sf-librtlsdr-0.8.0"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/4kgdvifvcbf407mjccbavk6hvhh773cq-librtlsdr-0.8.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/4kgdvifvcbf407mjccbavk6hvhh773cq-librtlsdr-0.8.0"
+        }
+      }
+    },
     "libxkbcommon@latest": {
       "last_modified": "2025-08-05T11:35:34Z",
       "resolved": "github:NixOS/nixpkgs/a683adc19ff5228af548c6539dbc3440509bfed3#libxkbcommon",
