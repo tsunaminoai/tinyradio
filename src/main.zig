@@ -461,10 +461,20 @@ const RadioTuner = struct {
         } else {
             self.volume = @max(0, self.volume - 5);
         }
+        self.receiver.setGain(@as(f32, @floatFromInt(self.volume)) / 100.0) catch |e| {
+            self.status_text = @errorName(e);
+            return;
+        };
         self.status_text = "Volume adjusted";
     }
 
     fn toggleMute(self: *Self) void {
+        if (self.is_muted) {
+            self.receiver.setGain(@as(f32, @floatFromInt(self.volume)) / 100.0) catch unreachable;
+        } else {
+            self.receiver.setGain(0) catch unreachable;
+        }
+
         self.is_muted = !self.is_muted;
         self.status_text = if (self.is_muted) "Muted" else "Unmuted";
     }
