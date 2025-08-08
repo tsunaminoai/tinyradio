@@ -51,7 +51,7 @@ pub fn build(b: *std.Build) void {
     test_app.addSystemIncludePath(b.path(".devbox/nix/profile/default/include"));
     test_app.linkLibC();
     test_app.linkLibrary(raylib_artifact);
-    b.installArtifact(test_app);
+    // b.installArtifact(test_app);
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());

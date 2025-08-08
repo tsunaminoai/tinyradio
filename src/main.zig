@@ -79,7 +79,7 @@ const RadioTuner = struct {
     frequency: f32,
     volume: u8,
     is_muted: bool,
-    signal_strength: u8,
+    signal_strength: f32,
 
     // UI widgets
     freq_up_button: vxfw.Button,
@@ -162,6 +162,7 @@ const RadioTuner = struct {
         };
         try tui.receiver.setGain(@as(f32, @floatFromInt(tui.volume)) / 100);
         tui.setRxFrequency();
+        tui.updateSignalStrength();
         return tui;
     }
 
@@ -236,7 +237,9 @@ const RadioTuner = struct {
             .focus_in => {
                 return ctx.requestFocus(self.freq_up_button.widget());
             },
-            else => {},
+            else => {
+                self.updateSignalStrength();
+            },
         }
     }
 
@@ -280,15 +283,15 @@ const RadioTuner = struct {
         });
 
         // Signal strength meter
-        const signal_bars = self.signal_strength / 10;
+        const signal_bars = self.signal_strength * 10;
         var signal_display = try std.fmt.allocPrint(ctx.arena, "Signal: ", .{});
         for (0..10) |i| {
             signal_display = try std.fmt.allocPrint(ctx.arena, "{s}{s}", .{
                 signal_display,
-                if (i < signal_bars) "█" else "░",
+                if (i < @as(usize, @intFromFloat(signal_bars))) "█" else "░",
             });
         }
-        signal_display = try std.fmt.allocPrint(ctx.arena, "{s} ({d}%)", .{ signal_display, self.signal_strength });
+        signal_display = try std.fmt.allocPrint(ctx.arena, "{s} ({d:.1}%)", .{ signal_display, self.signal_strength * 100 });
         const signal_text = vxfw.Text{ .text = signal_display };
         try children.append(.{
             .origin = .{ .row = 4, .col = 2 },
@@ -493,16 +496,7 @@ const RadioTuner = struct {
     }
     //TODO: Can this be accurate?
     fn updateSignalStrength(self: *Self) void {
-        // Simulate signal strength based on frequency (for demonstration)
-        // In a real implementation, this would come from actual radio hardware
-        const normalized_freq: f32 = switch (self.current_band) {
-            .FM => (self.frequency - 88.1) / (108.0 - 88.1),
-            .AM => (self.frequency - 530.0) / (1710.0 - 530.0),
-        };
-
-        // Create some variation in signal strength
-        const base_strength = 50 + @as(i64, @intFromFloat(30 * @sin(normalized_freq * 6.28)));
-        self.signal_strength = @min(100, @max(10, base_strength));
+        self.signal_strength = self.receiver.getPower();
     }
 
     // Button callbacks

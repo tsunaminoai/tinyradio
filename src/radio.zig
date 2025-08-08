@@ -20,6 +20,7 @@ pub const RadioReceiver = struct {
     af_deemphasis: radio.blocks.SinglepoleLowpassFilterBlock(f32),
     af_downsampler: radio.blocks.DownsamplerBlock(f32),
     af_gain: GainBlock,
+    power_meter: radio.blocks.PowerMeterBlock(f32),
     agc: radio.blocks.AGCBlock(f32),
 
     const tune_offset = -0e3;
@@ -42,6 +43,7 @@ pub const RadioReceiver = struct {
             .af_deemphasis = radio.blocks.FMDeemphasisFilterBlock.init(75e-6),
             .af_downsampler = radio.blocks.DownsamplerBlock(f32).init(5),
             .af_gain = GainBlock.init(0.3),
+            .power_meter = .init(50, .{}),
             .agc = radio.blocks.AGCBlock(f32).init(.{ .preset = .Fast }, .{}),
         };
         errdefer r.source.deinitialize(allocator);
@@ -60,6 +62,8 @@ pub const RadioReceiver = struct {
     }
 
     pub fn connect(self: *RadioReceiver) !void {
+        // Source → [TunerBlock] → [Demodulator] → [LowpassFilterBlock] →
+        // [PowerMeterBlock] → [Audio Sink (e.g., PulseAudioSink)]
 
         // Connect the processing chain
         try self.flowgraph.connect(&self.source.block, &self.tuner.block);
@@ -69,6 +73,7 @@ pub const RadioReceiver = struct {
         try self.flowgraph.connect(&self.af_filter.block, &self.af_deemphasis.block);
         try self.flowgraph.connect(&self.af_deemphasis.block, &self.af_downsampler.block);
         try self.flowgraph.connect(&self.af_downsampler.block, &self.af_gain.block);
+        try self.flowgraph.connect(&self.af_downsampler.block, &self.power_meter.block);
         try self.flowgraph.connect(&self.af_gain.block, &self.sink.block);
     }
 
@@ -86,6 +91,9 @@ pub const RadioReceiver = struct {
 
     pub fn stop(self: *RadioReceiver) !void {
         _ = try self.flowgraph.stop();
+    }
+    pub fn getPower(self: RadioReceiver) f32 {
+        return self.power_meter.average_power;
     }
 
     pub fn getAudioSamples(self: *RadioReceiver, buffer: []f32) !usize {
