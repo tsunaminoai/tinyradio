@@ -150,16 +150,17 @@ const RadioTuner = struct {
                 .userdata = null,
             },
             .presets = [_]RadioPreset{
-                .{ .frequency = 101.5, .name = "Rock FM", .band = .FM },
-                .{ .frequency = 95.8, .name = "Jazz 95", .band = .FM },
-                .{ .frequency = 1010.0, .name = "News AM", .band = .AM },
-                .{ .frequency = 98.7, .name = "Classic", .band = .FM },
-                .{ .frequency = 1200.0, .name = "Talk AM", .band = .AM },
-                .{ .frequency = 106.2, .name = "Pop FM", .band = .FM },
+                .{ .frequency = 91.9, .name = "Jeff 92", .band = .FM },
+                .{ .frequency = 920.0, .name = "WBAA News", .band = .AM },
+                .{ .frequency = 101.3, .name = "WBAA Jazz", .band = .FM },
+                .{ .frequency = 98.7, .name = "WASK Classic Hits", .band = .FM },
+                .{ .frequency = 93.5, .name = "KHY Rock", .band = .FM },
+                .{ .frequency = 95.7, .name = "MeTV Music", .band = .FM },
             },
             .preset_buttons = undefined, // Will be initialized properly
             .status_text = "Ready",
         };
+        try tui.receiver.setGain(@as(f32, @floatFromInt(tui.volume)) / 100);
         tui.setRxFrequency();
         return tui;
     }
