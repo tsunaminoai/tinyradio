@@ -6,6 +6,8 @@ const math = std.math;
 const vaxis = @import("vaxis");
 const vxfw = vaxis.vxfw;
 
+const radio = @import("radio.zig");
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -16,14 +18,18 @@ pub fn main() !void {
     defer app.deinit();
 
     // Create and initialize the radio tuner
-    const radio = try allocator.create(RadioTuner);
-    defer allocator.destroy(radio);
+    const tui = try allocator.create(RadioTuner);
+    defer allocator.destroy(tui);
 
-    radio.* = RadioTuner.init();
-    radio.initPresetButtons();
+    tui.* = RadioTuner.init(allocator) catch |e| {
+        std.debug.print("error: {}\n", .{e});
+        return;
+    };
+    defer tui.deinit();
+    tui.initPresetButtons();
 
     // Run the application
-    try app.run(radio.widget(), .{});
+    try app.run(tui.widget(), .{});
 }
 
 // Radio band definitions
@@ -31,24 +37,24 @@ const RadioBand = enum {
     AM,
     FM,
 
-    pub fn getRange(self: RadioBand) struct { min: f64, max: f64 } {
+    pub fn getRange(self: RadioBand) struct { min: f32, max: f32 } {
         return switch (self) {
             .AM => .{ .min = 530.0, .max = 1710.0 }, // kHz
             .FM => .{ .min = 88.1, .max = 108.0 }, // MHz
         };
     }
 
-    pub fn getDefaultFreq(self: RadioBand) f64 {
+    pub fn getDefaultFreq(self: RadioBand) f32 {
         return switch (self) {
-            .AM => 1000.0, // 1000 kHz
-            .FM => 100.0, // 100.0 MHz
+            .AM => 920.0,
+            .FM => 91.9,
         };
     }
 
-    pub fn getStepSize(self: RadioBand) f64 {
+    pub fn getStepSize(self: RadioBand) f32 {
         return switch (self) {
             .AM => 10.0, // 10 kHz steps
-            .FM => 0.2, // 0.2 MHz steps
+            .FM => 0.1, // 0.1 MHz steps
         };
     }
 
@@ -62,7 +68,7 @@ const RadioBand = enum {
 
 // Radio station preset
 const RadioPreset = struct {
-    frequency: f64,
+    frequency: f32,
     name: []const u8,
     band: RadioBand,
 };
@@ -70,7 +76,7 @@ const RadioPreset = struct {
 // Main application state
 const RadioTuner = struct {
     current_band: RadioBand,
-    frequency: f64,
+    frequency: f32,
     volume: u8,
     is_muted: bool,
     signal_strength: u8,
@@ -90,10 +96,24 @@ const RadioTuner = struct {
     // Status
     status_text: []const u8,
 
+    //radio itself
+    receiver: *radio.RadioReceiver,
+    allocator: Allocator,
+
     const Self = @This();
 
-    pub fn init() Self {
-        return Self{
+    pub fn init(alloc: Allocator) !Self {
+        const r = try alloc.create(radio.RadioReceiver);
+        errdefer alloc.destroy(r);
+        r.* = try .init(alloc, false);
+        errdefer r.deinit();
+
+        try r.connect();
+        try r.start();
+
+        var tui = Self{
+            .allocator = alloc,
+            .receiver = r,
             .current_band = .FM,
             .frequency = RadioBand.FM.getDefaultFreq(),
             .volume = 50,
@@ -140,6 +160,14 @@ const RadioTuner = struct {
             .preset_buttons = undefined, // Will be initialized properly
             .status_text = "Ready",
         };
+        tui.setRxFrequency();
+        return tui;
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.receiver.stop() catch unreachable;
+        self.receiver.deinit();
+        self.allocator.destroy(self.receiver);
     }
 
     pub fn initPresetButtons(self: *Self) void {
@@ -405,12 +433,18 @@ const RadioTuner = struct {
         } else {
             self.frequency = @max(range.min, self.frequency - step);
         }
-
+        self.setRxFrequency();
         // Simulate signal strength based on frequency (for demo)
         self.updateSignalStrength();
         self.status_text = "Frequency changed";
     }
 
+    fn setRxFrequency(self: *Self) void {
+        self.receiver.setFrequency(self.frequency) catch |e| {
+            std.log.err("Could not set frequency: {}\n", .{e});
+        };
+    }
+    // TODO: Add AM chain
     fn toggleBand(self: *Self) void {
         self.current_band = switch (self.current_band) {
             .AM => .FM,
@@ -420,7 +454,7 @@ const RadioTuner = struct {
         self.updateSignalStrength();
         self.status_text = "Band changed";
     }
-
+    //TODO: Get gain working
     fn adjustVolume(self: *Self, increase: bool) void {
         if (increase) {
             self.volume = @min(100, self.volume + 5);
@@ -440,15 +474,18 @@ const RadioTuner = struct {
             const preset = self.presets[index];
             self.current_band = preset.band;
             self.frequency = preset.frequency;
+            self.receiver.setFrequency(self.frequency) catch |e| {
+                std.log.err("Could not set frequency: {}\n", .{e});
+            };
             self.updateSignalStrength();
             self.status_text = "Preset loaded";
         }
     }
-
+    //TODO: Can this be accurate?
     fn updateSignalStrength(self: *Self) void {
         // Simulate signal strength based on frequency (for demonstration)
         // In a real implementation, this would come from actual radio hardware
-        const normalized_freq: f64 = switch (self.current_band) {
+        const normalized_freq: f32 = switch (self.current_band) {
             .FM => (self.frequency - 88.1) / (108.0 - 88.1),
             .AM => (self.frequency - 530.0) / (1710.0 - 530.0),
         };

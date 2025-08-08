@@ -23,10 +23,10 @@ pub const RadioReceiver = struct {
 
     const tune_offset = -0e3;
 
-    pub fn init(allocator: std.mem.Allocator) !RadioReceiver {
+    pub fn init(allocator: std.mem.Allocator, debug: bool) !RadioReceiver {
         const r = RadioReceiver{
             .allocator = allocator,
-            .flowgraph = radio.Flowgraph.init(allocator, .{ .debug = true }),
+            .flowgraph = radio.Flowgraph.init(allocator, .{ .debug = debug }),
             .source = radio.blocks.RtlSdrSource.init(
                 88.5e6, // 88.5 MHz
                 2.4e6, // 2.4 MS/s
@@ -42,7 +42,9 @@ pub const RadioReceiver = struct {
             .af_downsampler = radio.blocks.DownsamplerBlock(f32).init(5),
             .agc = radio.blocks.AGCBlock(f32).init(.{ .preset = .Fast }, .{}),
         };
-        // try r.connect();
+        errdefer r.source.deinitialize(allocator);
+        errdefer r.flowgraph.deinit();
+
         return r;
     }
 
@@ -95,7 +97,7 @@ pub const RadioReceiver = struct {
 };
 
 test {
-    var r = try RadioReceiver.init(tst.allocator);
+    var r = try RadioReceiver.init(tst.allocator, true);
     defer r.deinit();
 
     try r.connect();

@@ -26,7 +26,7 @@ pub fn main() !void {
     rl.setTargetFPS(60);
 
     // Create and initialize radio receiver
-    receiver = try radio_receiver.RadioReceiver.init(allocator);
+    receiver = try radio_receiver.RadioReceiver.init(allocator, true);
     defer receiver.deinit();
 
     try receiver.connect();

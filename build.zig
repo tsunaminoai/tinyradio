@@ -25,14 +25,16 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    exe_mod.addImport("radio", radio.module("radio"));
+    exe_mod.addImport("vaxis", vaxis.module("vaxis"));
+    exe_mod.addLibraryPath(b.path(".devbox/nix/profile/default/lib"));
+    exe_mod.addSystemIncludePath(b.path(".devbox/nix/profile/default/include"));
     const exe = b.addExecutable(.{
         .name = "tinyradio",
         .use_lld = false,
 
         .root_module = exe_mod,
     });
-    exe.root_module.addImport("radio", radio.module("radio"));
-    exe_mod.addImport("vaxis", vaxis.module("vaxis"));
     exe.linkLibC();
     b.installArtifact(exe);
 
