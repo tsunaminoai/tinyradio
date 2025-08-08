@@ -217,10 +217,10 @@ const RadioTuner = struct {
                 } else if (key.matches('m', .{})) {
                     self.toggleMute();
                     return ctx.consumeAndRedraw();
-                } else if (key.matches('+', .{})) {
+                } else if (key.matches('+', .{}) or key.matches(vaxis.Key.right, .{})) {
                     self.adjustVolume(true);
                     return ctx.consumeAndRedraw();
-                } else if (key.matches('-', .{})) {
+                } else if (key.matches('-', .{}) or key.matches(vaxis.Key.left, .{})) {
                     self.adjustVolume(false);
                     return ctx.consumeAndRedraw();
                 }
@@ -452,9 +452,8 @@ const RadioTuner = struct {
         };
         self.frequency = self.current_band.getDefaultFreq();
         self.updateSignalStrength();
-        self.status_text = "Band changed";
+        self.status_text = "Band changed (or did it? IMPLEMENT THIS)";
     }
-    //TODO: Get gain working
     fn adjustVolume(self: *Self, increase: bool) void {
         if (increase) {
             self.volume = @min(100, self.volume + 5);

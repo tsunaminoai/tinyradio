@@ -76,8 +76,8 @@ pub const RadioReceiver = struct {
         try self.source.setFrequency(freq_mhz * 1e6);
     }
 
-    pub fn setGain(self: *RadioReceiver, gain_db: f32) !void {
-        self.af_gain.setGainDB(gain_db); // Set gain in dB
+    pub fn setGain(self: *RadioReceiver, linear_gain: f32) !void {
+        self.af_gain.setGain(linear_gain); // Set gain in dB
     }
 
     pub fn start(self: *RadioReceiver) !void {
@@ -118,8 +118,8 @@ pub const GainBlock = struct {
             .gain = initial_gain,
         };
     }
-    pub fn setGain(self: *Self, new_gain: f32) void {
-        self.gain = new_gain;
+    pub fn setGain(self: *Self, linear_gain: f32) void {
+        self.gain = linear_gain;
     }
 
     pub fn setGainDB(self: *Self, gain_db: f32) void {
