@@ -44,6 +44,10 @@
             .url = "git+https://github.com/Not-Nik/raylib-zig?ref=devel#a6e9ce520f056200bc8aaecb6ca3c35ffe84cccd",
             .hash = "raylib_zig-5.6.0-dev-KE8REBMwBQD5YduSugg8Iimkyc-G6Daz6OBEjUI94xCz",
         },
+        .vaxis = .{
+            .url = "git+https://github.com/rockorager/libvaxis.git#7d8015ee82bd547e92b433fc698ce86a0d87b18b",
+            .hash = "vaxis-0.5.1-BWNV_CIVCQC3Bk1-nguTPlKtXmm7AyPOZd95Ut2KYLVD",
+        },
     },
     .paths = .{
         "build.zig",

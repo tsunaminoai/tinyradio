@@ -6,15 +6,16 @@ pub fn build(b: *std.Build) void {
     const raylib_dep = b.dependency("raylib_zig", .{
         .target = target,
         .optimize = optimize,
+        .linux_display_backend = .X11,
     });
 
     const raylib = raylib_dep.module("raylib"); // main raylib module
+    raylib.addLibraryPath(b.path(".devbox/nix/profile/default/lib"));
+    raylib.addSystemIncludePath(b.path(".devbox/nix/profile/default/include"));
     const raygui = raylib_dep.module("raygui"); // raygui module
     const raylib_artifact = raylib_dep.artifact("raylib"); // raylib C library
-
-    const test_app = b.addExecutable(.{
-        .name = "tinierradio",
-        .root_source_file = b.path("src/test.zig"),
+    // add vaxis dependency to module
+    const vaxis = b.dependency("vaxis", .{
         .target = target,
         .optimize = optimize,
     });
@@ -31,14 +32,16 @@ pub fn build(b: *std.Build) void {
         .root_module = exe_mod,
     });
     exe.root_module.addImport("radio", radio.module("radio"));
-    exe.root_module.addImport("raylib", raylib);
-    exe.root_module.addImport("raygui", raygui);
-    exe.addLibraryPath(b.path(".devbox/nix/profile/default/lib"));
-    exe.addSystemIncludePath(b.path(".devbox/nix/profile/default/include"));
+    exe_mod.addImport("vaxis", vaxis.module("vaxis"));
     exe.linkLibC();
-    exe.linkLibrary(raylib_artifact);
     b.installArtifact(exe);
 
+    const test_app = b.addExecutable(.{
+        .name = "tinierradio",
+        .root_source_file = b.path("src/test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
     test_app.root_module.addImport("radio", radio.module("radio"));
     test_app.root_module.addImport("raylib", raylib);
     test_app.root_module.addImport("raygui", raygui);
@@ -60,13 +63,7 @@ pub fn build(b: *std.Build) void {
         .root_module = exe_mod,
         .use_lld = false,
     });
-    exe_unit_tests.root_module.addImport("radio", radio.module("radio"));
-    exe_unit_tests.root_module.addImport("raylib", raylib);
-    exe_unit_tests.root_module.addImport("raygui", raygui);
-    exe_unit_tests.addLibraryPath(b.path(".devbox/nix/profile/default/lib"));
-    exe_unit_tests.addSystemIncludePath(b.path(".devbox/nix/profile/default/include"));
     exe_unit_tests.linkLibC();
-    exe_unit_tests.linkLibrary(raylib_artifact);
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_exe_unit_tests.step);
