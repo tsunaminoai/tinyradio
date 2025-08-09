@@ -86,12 +86,12 @@ const RadioTuner = struct {
             .is_muted = false,
             .signal_strength = 75, // Simulated signal strength
             .freq_up_button = .{
-                .label = "FREQ +",
+                .label = "Freq +",
                 .onClick = freqUpCallback,
                 .userdata = null,
             },
             .freq_down_button = .{
-                .label = "FREQ -",
+                .label = "Freq -",
                 .onClick = freqDownCallback,
                 .userdata = null,
             },
@@ -101,18 +101,18 @@ const RadioTuner = struct {
                 .userdata = null,
             },
             .volume_up_button = .{
-                .label = "VOL +",
+                .label = "Vol +",
                 .onClick = volumeUpCallback,
                 .userdata = null,
             },
-            .volume_down_button = .{
-                .label = "VOL -",
-                .onClick = volumeDownCallback,
+            .mute_button = .{
+                .label = "Mute",
+                .onClick = muteCallback,
                 .userdata = null,
             },
-            .mute_button = .{
-                .label = "MUTE",
-                .onClick = muteCallback,
+            .volume_down_button = .{
+                .label = "Vol -",
+                .onClick = volumeDownCallback,
                 .userdata = null,
             },
             .presets = [_]RadioPreset{
@@ -228,6 +228,7 @@ const RadioTuner = struct {
         self.volume_up_button.userdata = self;
         self.volume_down_button.userdata = self;
         self.mute_button.userdata = self;
+        self.signal_strength = self.receiver.getPower();
 
         for (0..6) |i| {
             self.preset_buttons[i].userdata = self;
@@ -266,7 +267,13 @@ const RadioTuner = struct {
             });
         }
         signal_display = try std.fmt.allocPrint(ctx.arena, "{s} ({d:.1}%)", .{ signal_display, self.signal_strength * 100 });
-        const signal_text = vxfw.Text{ .text = signal_display };
+        const signal_text = vxfw.Text{
+            .text = signal_display,
+            .style = .{
+                .fg = vaxis.Color.rgbFromSpec("00FF00") catch unreachable,
+                .bg = vaxis.Color.rgbFromSpec("0000FF") catch unreachable,
+            },
+        };
         try children.append(.{
             .origin = .{ .row = 4, .col = 2 },
             .surface = try signal_text.draw(ctx),
@@ -327,6 +334,15 @@ const RadioTuner = struct {
             )),
         });
         col_offset += button_spacing;
+        // Mute button
+        try children.append(.{
+            .origin = .{ .row = 7, .col = col_offset },
+            .surface = try self.mute_button.draw(ctx.withConstraints(
+                ctx.min,
+                .{ .width = button_width, .height = button_height },
+            )),
+        });
+        col_offset += button_spacing;
 
         try children.append(.{
             .origin = .{ .row = 7, .col = col_offset },
@@ -335,15 +351,7 @@ const RadioTuner = struct {
                 .{ .width = button_width, .height = button_height },
             )),
         });
-
-        // Mute button (new row)
-        try children.append(.{
-            .origin = .{ .row = 11, .col = 2 },
-            .surface = try self.mute_button.draw(ctx.withConstraints(
-                ctx.min,
-                .{ .width = button_width, .height = button_height },
-            )),
-        });
+        col_offset += button_spacing;
 
         // Presets section
         const presets_title = vxfw.Text{ .text = "Presets (Press 1-6):" };
