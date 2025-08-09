@@ -8,7 +8,7 @@ const rl = @import("raylib");
 
 pub const RadioReceiver = struct {
     allocator: std.mem.Allocator,
-    flowgraph: radio.Flowgraph,
+    flowgraph: ?radio.Flowgraph,
     source: radio.blocks.RtlSdrSource,
     sink: radio.blocks.PulseAudioSink(1),
 
@@ -20,12 +20,14 @@ pub const RadioReceiver = struct {
 
     // demodulators
     fm: radio.blocks.WBFMMonoDemodulatorBlock,
+    debug: bool = false,
 
     const tune_offset = -0e3;
 
     pub fn init(allocator: std.mem.Allocator, debug: bool) !RadioReceiver {
         const r = RadioReceiver{
             .allocator = allocator,
+            .debug = debug,
             .flowgraph = radio.Flowgraph.init(allocator, .{ .debug = debug }),
             .source = radio.blocks.RtlSdrSource.init(
                 88.5e6, // 88.5 MHz
@@ -48,7 +50,7 @@ pub const RadioReceiver = struct {
     }
 
     pub fn deinit(self: *RadioReceiver) void {
-        self.flowgraph.deinit();
+        if (self.flowgraph) |*f| f.deinit();
         // if (self.source) |source| source.deinit();
         // if (self.sink) |sink| sink.deinit();
         // if (self.fm_demod) |demod| demod.deinit();
@@ -56,16 +58,28 @@ pub const RadioReceiver = struct {
         // self.context.deinit();
     }
 
-    pub fn connect(self: *RadioReceiver) !void {
+    pub fn connect(self: *RadioReceiver, band: Band) !void {
         // Source → [TunerBlock] → [Demodulator] → [LowpassFilterBlock] →
         // [PowerMeterBlock] → [Audio Sink (e.g., PulseAudioSink)]
+        if (self.flowgraph) |*f| {
+            _ = f.stop() catch |e| {
+                std.debug.print("wat {}\n", .{e});
+            };
+            f.deinit();
+            self.flowgraph = .init(self.allocator, .{ .debug = self.debug });
+        }
 
         // Connect the processing chain
-        try self.flowgraph.connect(&self.source.block, &self.tuner.block);
-        try self.flowgraph.connectPort(&self.tuner.block, "out1", &self.fm.block, "in1");
-        try self.flowgraph.connectPort(&self.fm.block, "out1", &self.power_meter.block, "in1");
-        try self.flowgraph.connectPort(&self.fm.block, "out1", &self.af_gain.block, "in1");
-        try self.flowgraph.connect(&self.af_gain.block, &self.sink.block);
+        try self.flowgraph.?.connect(&self.source.block, &self.tuner.block);
+        switch (band) {
+            .FM => {
+                try self.flowgraph.?.connectPort(&self.tuner.block, "out1", &self.fm.block, "in1");
+                try self.flowgraph.?.connectPort(&self.fm.block, "out1", &self.power_meter.block, "in1");
+                try self.flowgraph.?.connectPort(&self.fm.block, "out1", &self.af_gain.block, "in1");
+            },
+            .AM => {},
+        }
+        try self.flowgraph.?.connect(&self.af_gain.block, &self.sink.block);
     }
 
     pub fn setFrequency(self: *RadioReceiver, freq_mhz: f32) !void {
@@ -75,18 +89,14 @@ pub const RadioReceiver = struct {
     pub fn setGain(self: *RadioReceiver, linear_gain: f32) !void {
         self.af_gain.setGain(linear_gain); // Set gain in dB
     }
-    pub fn setDemodulator(self: *RadioReceiver, band: Band) !void {
-        _ = self; // autofix
-        _ = band; // autofix
-
-    }
 
     pub fn start(self: *RadioReceiver) !void {
-        try self.flowgraph.start();
+        if (self.flowgraph) |*f| try f.start();
     }
 
     pub fn stop(self: *RadioReceiver) !void {
-        _ = try self.flowgraph.stop();
+        if (self.flowgraph) |*f|
+            _ = try f.stop();
     }
     pub fn getPower(self: RadioReceiver) f32 {
         return self.power_meter.average_power;

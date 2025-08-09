@@ -136,7 +136,7 @@ const RadioTuner = struct {
     }
 
     pub fn start(self: *Self) !void {
-        try self.receiver.connect();
+        try self.receiver.connect(self.current_band);
         try self.receiver.start();
         try self.receiver.setGain(@as(f32, @floatFromInt(self.volume)) / 100);
         self.setRxFrequency();
@@ -429,8 +429,9 @@ const RadioTuner = struct {
             .AM => .FM,
             .FM => .AM,
         };
-        self.receiver.setDemodulator(self.current_band) catch unreachable;
+        self.receiver.connect(self.current_band) catch unreachable;
         self.frequency = self.current_band.getDefaultFreq();
+        self.receiver.setFrequency(self.frequency) catch unreachable;
         self.updateSignalStrength();
         self.status_text = "Band changed (or did it? IMPLEMENT THIS)";
     }
