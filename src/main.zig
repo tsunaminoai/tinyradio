@@ -237,12 +237,24 @@ const RadioTuner = struct {
         // Create children surfaces
         var children = std.ArrayList(vxfw.SubSurface).init(ctx.arena);
 
-        // Title
-        const title_text = try std.fmt.allocPrint(ctx.arena, "═══ AM/FM RADIO TUNER ═══", .{});
-        const title = vxfw.Text{ .text = title_text };
+        // title row
+        const titleRow = vxfw.FlexRow{
+            .children = &[_]vxfw.FlexItem{
+                .{
+                    .flex = 1,
+                    .widget = (vxfw.Text{
+                        .text = "TinyRadio",
+                        .style = .{
+                            .bold = true,
+                        },
+                        .text_align = .center,
+                    }).widget(),
+                },
+            },
+        };
         try children.append(.{
-            .origin = .{ .row = 1, .col = 2 },
-            .surface = try title.draw(ctx),
+            .origin = .{ .row = 0, .col = 0 },
+            .surface = try titleRow.draw(ctx),
         });
 
         // Current frequency display
