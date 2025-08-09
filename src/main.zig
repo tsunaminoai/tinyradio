@@ -7,6 +7,7 @@ const vaxis = @import("vaxis");
 const vxfw = vaxis.vxfw;
 
 const radio = @import("radio.zig");
+const RadioBand = radio.Band;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -31,40 +32,6 @@ pub fn main() !void {
     // Run the application
     try app.run(tui.widget(), .{});
 }
-
-// Radio band definitions
-const RadioBand = enum {
-    AM,
-    FM,
-
-    pub fn getRange(self: RadioBand) struct { min: f32, max: f32 } {
-        return switch (self) {
-            .AM => .{ .min = 530.0, .max = 1710.0 }, // kHz
-            .FM => .{ .min = 88.1, .max = 108.0 }, // MHz
-        };
-    }
-
-    pub fn getDefaultFreq(self: RadioBand) f32 {
-        return switch (self) {
-            .AM => 920.0,
-            .FM => 91.9,
-        };
-    }
-
-    pub fn getStepSize(self: RadioBand) f32 {
-        return switch (self) {
-            .AM => 10.0, // 10 kHz steps
-            .FM => 0.1, // 0.1 MHz steps
-        };
-    }
-
-    pub fn getUnit(self: RadioBand) []const u8 {
-        return switch (self) {
-            .AM => "kHz",
-            .FM => "MHz",
-        };
-    }
-};
 
 // Radio station preset
 const RadioPreset = struct {
@@ -106,7 +73,7 @@ const RadioTuner = struct {
     pub fn init(alloc: Allocator) !Self {
         const r = try alloc.create(radio.RadioReceiver);
         errdefer alloc.destroy(r);
-        r.* = try .init(alloc, false);
+        r.* = try .init(alloc, true);
         errdefer r.deinit();
 
         const tui = Self{
@@ -462,6 +429,7 @@ const RadioTuner = struct {
             .AM => .FM,
             .FM => .AM,
         };
+        self.receiver.setDemodulator(self.current_band) catch unreachable;
         self.frequency = self.current_band.getDefaultFreq();
         self.updateSignalStrength();
         self.status_text = "Band changed (or did it? IMPLEMENT THIS)";

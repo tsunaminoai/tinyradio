@@ -12,16 +12,14 @@ pub const RadioReceiver = struct {
     source: radio.blocks.RtlSdrSource,
     sink: radio.blocks.PulseAudioSink(1),
 
-    // FM demodulation chain
-
+    // base nodes
     tuner: radio.blocks.TunerBlock,
-    fm_demod: radio.blocks.FrequencyDiscriminatorBlock,
-    af_filter: radio.blocks.LowpassFilterBlock(f32, 128),
-    af_deemphasis: radio.blocks.SinglepoleLowpassFilterBlock(f32),
-    af_downsampler: radio.blocks.DownsamplerBlock(f32),
     af_gain: GainBlock,
     power_meter: radio.blocks.PowerMeterBlock(f32),
     agc: radio.blocks.AGCBlock(f32),
+
+    // demodulators
+    fm: radio.blocks.WBFMMonoDemodulatorBlock,
 
     const tune_offset = -0e3;
 
@@ -38,11 +36,8 @@ pub const RadioReceiver = struct {
             ),
             .sink = radio.blocks.PulseAudioSink(1).init(),
             .tuner = radio.blocks.TunerBlock.init(tune_offset, 200e3, 4),
-            .fm_demod = radio.blocks.FrequencyDiscriminatorBlock.init(75e3),
-            .af_filter = radio.blocks.LowpassFilterBlock(f32, 128).init(15e3, .{}),
-            .af_deemphasis = radio.blocks.FMDeemphasisFilterBlock.init(75e-6),
-            .af_downsampler = radio.blocks.DownsamplerBlock(f32).init(5),
             .af_gain = GainBlock.init(0.3),
+            .fm = .init(.{}),
             .power_meter = .init(50, .{}),
             .agc = radio.blocks.AGCBlock(f32).init(.{ .preset = .Fast }, .{}),
         };
@@ -67,13 +62,9 @@ pub const RadioReceiver = struct {
 
         // Connect the processing chain
         try self.flowgraph.connect(&self.source.block, &self.tuner.block);
-        // try self.flowgraph.connect(&self.agc.block, &self.tuner.block);
-        try self.flowgraph.connect(&self.tuner.block, &self.fm_demod.block);
-        try self.flowgraph.connect(&self.fm_demod.block, &self.af_filter.block);
-        try self.flowgraph.connect(&self.af_filter.block, &self.af_deemphasis.block);
-        try self.flowgraph.connect(&self.af_deemphasis.block, &self.af_downsampler.block);
-        try self.flowgraph.connect(&self.af_downsampler.block, &self.af_gain.block);
-        try self.flowgraph.connect(&self.af_downsampler.block, &self.power_meter.block);
+        try self.flowgraph.connectPort(&self.tuner.block, "out1", &self.fm.block, "in1");
+        try self.flowgraph.connectPort(&self.fm.block, "out1", &self.power_meter.block, "in1");
+        try self.flowgraph.connectPort(&self.fm.block, "out1", &self.af_gain.block, "in1");
         try self.flowgraph.connect(&self.af_gain.block, &self.sink.block);
     }
 
@@ -83,6 +74,11 @@ pub const RadioReceiver = struct {
 
     pub fn setGain(self: *RadioReceiver, linear_gain: f32) !void {
         self.af_gain.setGain(linear_gain); // Set gain in dB
+    }
+    pub fn setDemodulator(self: *RadioReceiver, band: Band) !void {
+        _ = self; // autofix
+        _ = band; // autofix
+
     }
 
     pub fn start(self: *RadioReceiver) !void {
@@ -146,39 +142,38 @@ pub const GainBlock = struct {
         return radio.ProcessResult.init(&[1]usize{input.len}, &[1]usize{idx});
     }
 };
-pub const ComplexGainBlock = struct {
-    block: radio.Block,
-    gain: f32,
 
-    const Self = @This();
-    const Complex = std.math.Complex(f32);
+// Radio band definitions
+pub const Band =
+    enum {
+        AM,
+        FM,
 
-    pub fn init(initial_gain: f32) Self {
-        return Self{
-            .block = radio.Block.init("ComplexGainBlock", Self, &.{
-                .{ .name = "in", .type = Complex },
-            }, &.{
-                .{ .name = "out", .type = Complex },
-            }),
-            .gain = initial_gain,
-        };
-    }
-
-    pub fn setGain(self: *Self, new_gain: f32) void {
-        self.gain = new_gain;
-    }
-
-    pub fn setGainDB(self: *Self, gain_db: f32) void {
-        const linear_gain = std.math.pow(f32, 10.0, gain_db / 20.0);
-        self.gain = linear_gain;
-    }
-
-    pub fn process(self: *Self, input: []const Complex, output: []Complex) void {
-        for (input, 0..) |sample, i| {
-            output[i] = Complex{
-                .re = sample.re * self.gain,
-                .im = sample.im * self.gain,
+        pub fn getRange(self: Band) struct { min: f32, max: f32 } {
+            return switch (self) {
+                .AM => .{ .min = 530.0, .max = 1710.0 }, // kHz
+                .FM => .{ .min = 88.1, .max = 108.0 }, // MHz
             };
         }
-    }
-};
+
+        pub fn getDefaultFreq(self: Band) f32 {
+            return switch (self) {
+                .AM => 920.0,
+                .FM => 91.9,
+            };
+        }
+
+        pub fn getStepSize(self: Band) f32 {
+            return switch (self) {
+                .AM => 10.0, // 10 kHz steps
+                .FM => 0.1, // 0.1 MHz steps
+            };
+        }
+
+        pub fn getUnit(self: Band) []const u8 {
+            return switch (self) {
+                .AM => "kHz",
+                .FM => "MHz",
+            };
+        }
+    };
