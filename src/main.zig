@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtins = @import("builtin");
 const Array = std.ArrayList;
 const Allocator = std.mem.Allocator;
 const tst = std.testing;
@@ -73,7 +74,7 @@ const RadioTuner = struct {
     pub fn init(alloc: Allocator) !Self {
         const r = try alloc.create(radio.RadioReceiver);
         errdefer alloc.destroy(r);
-        r.* = try .init(alloc, true);
+        r.* = try .init(alloc, !builtins.strip_debug_info);
         errdefer r.deinit();
 
         const tui = Self{
@@ -120,7 +121,7 @@ const RadioTuner = struct {
                 .{ .frequency = 101.3, .name = "WBAA Jazz", .band = .FM },
                 .{ .frequency = 98.7, .name = "WASK Classic Hits", .band = .FM },
                 .{ .frequency = 93.5, .name = "KHY Rock", .band = .FM },
-                .{ .frequency = 95.7, .name = "MeTV Music", .band = .FM },
+                .{ .frequency = 1450.0, .name = "WASK", .band = .AM },
             },
             .preset_buttons = undefined, // Will be initialized properly
             .status_text = "Ready",
