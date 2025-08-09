@@ -20,18 +20,19 @@ pub fn main() !void {
     defer app.deinit();
 
     // Create and initialize the radio tuner
-    const tui = try allocator.create(RadioTuner);
-    defer allocator.destroy(tui);
+    const tuner = try allocator.create(Application);
+    defer allocator.destroy(tuner);
 
-    tui.* = RadioTuner.init(allocator) catch |e| {
+    tuner.* = Application.init(allocator) catch |e| {
         std.debug.print("error: {}\n", .{e});
-        return;
+        return e;
     };
-    defer tui.deinit();
-    tui.initPresetButtons();
+    defer tuner.deinit();
+    // tui.initPresetButtons();
+    // var view = ViewModel.init(allocator, tuner);
 
     // Run the application
-    try app.run(tui.widget(), .{});
+    try app.run(tuner.widget(), .{});
 }
 
 // Radio station preset
@@ -42,7 +43,7 @@ const RadioPreset = struct {
 };
 
 // Main application state
-const RadioTuner = struct {
+const Application = struct {
     current_band: RadioBand,
     frequency: f32,
     volume: u8,
@@ -68,6 +69,7 @@ const RadioTuner = struct {
     //radio itself
     receiver: *radio.RadioReceiver,
     allocator: Allocator,
+    view_model: ?ViewModel = null,
 
     const Self = @This();
 
@@ -77,7 +79,7 @@ const RadioTuner = struct {
         r.* = try .init(alloc, !builtins.strip_debug_info);
         errdefer r.deinit();
 
-        const tui = Self{
+        const app = Self{
             .allocator = alloc,
             .receiver = r,
             .current_band = .FM,
@@ -127,7 +129,7 @@ const RadioTuner = struct {
             .status_text = "Ready",
         };
 
-        return tui;
+        return app;
     }
 
     pub fn deinit(self: *Self) void {
@@ -137,8 +139,16 @@ const RadioTuner = struct {
     }
 
     pub fn start(self: *Self) !void {
-        try self.receiver.connect(self.current_band);
-        try self.receiver.start();
+        self.receiver.connect(self.current_band) catch |e| {
+            std.log.err("Error connecting reciever: {}", .{e});
+            self.status_text = "Could not connect to reciever";
+            return;
+        };
+        self.receiver.start() catch |e| {
+            std.log.err("Error starting reciever: {}", .{e});
+            self.status_text = "Could not start reciever";
+            return;
+        };
         try self.receiver.setGain(@as(f32, @floatFromInt(self.volume)) / 100);
         self.setRxFrequency();
         self.updateSignalStrength();
@@ -162,6 +172,8 @@ const RadioTuner = struct {
             .drawFn = Self.typeErasedDrawFn,
         };
     }
+
+    // Alternative widget using ViewModel - more efficient vaxis usage
 
     fn typeErasedEventHandler(ptr: *anyopaque, ctx: *vxfw.EventContext, event: vxfw.Event) anyerror!void {
         const self: *Self = @ptrCast(@alignCast(ptr));
@@ -257,18 +269,6 @@ const RadioTuner = struct {
             .surface = try titleRow.draw(ctx),
         });
 
-        // Current frequency display
-        const freq_text = try std.fmt.allocPrint(ctx.arena, "Frequency: {d:.1} {s} [{s}]", .{
-            self.frequency,
-            self.current_band.getUnit(),
-            @tagName(self.current_band),
-        });
-        const freq_display = vxfw.Text{ .text = freq_text };
-        try children.append(.{
-            .origin = .{ .row = 3, .col = 2 },
-            .surface = try freq_display.draw(ctx),
-        });
-
         // Signal strength meter
         const signal_bars = self.signal_strength * 10;
         var signal_display = try std.fmt.allocPrint(ctx.arena, "Signal: ", .{});
@@ -279,27 +279,46 @@ const RadioTuner = struct {
             });
         }
         signal_display = try std.fmt.allocPrint(ctx.arena, "{s} ({d:.1}%)", .{ signal_display, self.signal_strength * 100 });
-        const signal_text = vxfw.Text{
-            .text = signal_display,
-            .style = .{
-                .fg = vaxis.Color.rgbFromSpec("00FF00") catch unreachable,
-                .bg = vaxis.Color.rgbFromSpec("0000FF") catch unreachable,
-            },
-        };
-        try children.append(.{
-            .origin = .{ .row = 4, .col = 2 },
-            .surface = try signal_text.draw(ctx),
-        });
-
-        // Volume display
         const volume_text = try std.fmt.allocPrint(ctx.arena, "Volume: {d}% {s}", .{
             if (self.is_muted) 0 else self.volume,
             if (self.is_muted) "[MUTED]" else "",
         });
-        const volume_display = vxfw.Text{ .text = volume_text };
+
+        const statusRow = vxfw.FlexRow{
+            .children = &[_]vxfw.FlexItem{
+                .{
+                    .flex = 1,
+                    .widget = (vxfw.Text{
+                        .text = try std.fmt.allocPrint(ctx.arena, "Frequency: {d:.1} {s} [{s}]", .{
+                            self.frequency,
+                            self.current_band.getUnit(),
+                            @tagName(self.current_band),
+                        }),
+                    }).widget(),
+                },
+                .{
+                    .flex = 1,
+                    .widget = (vxfw.Text{
+                        .text = signal_display,
+                        .style = .{
+                            .fg = vaxis.Color.rgbFromUint(0x00FF00),
+                            .bg = vaxis.Color.rgbFromUint(0x0000FF),
+                        },
+                    }).widget(),
+                },
+                .{
+                    .flex = 1,
+                    .widget = (vxfw.Text{ .text = volume_text }).widget(),
+                },
+            },
+        };
         try children.append(.{
-            .origin = .{ .row = 5, .col = 2 },
-            .surface = try volume_display.draw(ctx),
+            .origin = .{ .row = 0, .col = 0 },
+            .surface = try titleRow.draw(ctx),
+        });
+        try children.append(.{
+            .origin = .{ .row = 1, .col = 0 },
+            .surface = try statusRow.draw(ctx),
         });
 
         // Control buttons row
@@ -566,16 +585,228 @@ const RadioTuner = struct {
     }
 };
 
-//todo: make a slightly better UI
 const ViewModel = struct {
-    MainSurface: vxfw.FlexColumn = .{
-        .children = &[_]vxfw.FlexItem{
-            .{
-                .flex = 1,
-                .widget = (vxfw.FlexRow{
-                    .children = &[_]vxfw.Button{},
-                }).widget(),
+    tuner: *Application,
+    allocator: std.mem.Allocator,
+
+    const Self = @This();
+
+    pub fn init(allocator: std.mem.Allocator, tuner: *Application) Self {
+        return .{
+            .tuner = tuner,
+            .allocator = allocator,
+        };
+    }
+
+    pub fn createMainLayout(self: *Self, ctx: vxfw.DrawContext) !vxfw.Surface {
+        // Update all button userdata
+        self.updateButtonUserData();
+
+        const layout = vxfw.FlexColumn{
+            .children = &[_]vxfw.FlexItem{
+                // Title
+                .{ .flex = 0, .widget = self.titleWidget(ctx) },
+                // Radio Info
+                .{ .flex = 0, .widget = try self.infoWidget(ctx) },
+                // Controls
+                .{ .flex = 0, .widget = self.controlsWidget() },
+                // Presets
+                .{ .flex = 1, .widget = try self.presetsWidget(ctx) },
+                // Status
+                .{ .flex = 0, .widget = try self.statusWidget(ctx) },
             },
-        },
-    },
+        };
+
+        return try layout.draw(ctx);
+    }
+
+    fn updateButtonUserData(self: *Self) void {
+        // Update all button userdata to point to tuner
+        self.tuner.freq_up_button.userdata = self.tuner;
+        self.tuner.freq_down_button.userdata = self.tuner;
+        self.tuner.band_toggle_button.userdata = self.tuner;
+        self.tuner.volume_up_button.userdata = self.tuner;
+        self.tuner.volume_down_button.userdata = self.tuner;
+        self.tuner.mute_button.userdata = self.tuner;
+
+        for (0..6) |i| {
+            self.tuner.preset_buttons[i].userdata = self.tuner;
+        }
+    }
+
+    fn titleWidget(self: *Self, _: vxfw.DrawContext) vxfw.Widget {
+        _ = self;
+        return (vxfw.Text{
+            .text = "═══ TinyRadio ═══",
+            .style = .{ .bold = true },
+            .text_align = .center,
+        }).widget();
+    }
+
+    fn infoWidget(self: *Self, ctx: vxfw.DrawContext) !vxfw.Widget {
+        const freq_text = try std.fmt.allocPrint(ctx.arena, "Frequency: {d:.1} {s} [{s}]", .{
+            self.tuner.frequency,
+            self.tuner.current_band.getUnit(),
+            @tagName(self.tuner.current_band),
+        });
+
+        // Create signal meter
+        const signal_bars = self.tuner.signal_strength * 10;
+        var signal_display = try std.fmt.allocPrint(ctx.arena, "Signal: ", .{});
+        for (0..10) |i| {
+            signal_display = try std.fmt.allocPrint(ctx.arena, "{s}{s}", .{
+                signal_display,
+                if (i < @as(usize, @intFromFloat(signal_bars))) "█" else "░",
+            });
+        }
+        signal_display = try std.fmt.allocPrint(ctx.arena, "{s} ({d:.1}%)", .{ signal_display, self.tuner.signal_strength * 100 });
+
+        const volume_text = try std.fmt.allocPrint(ctx.arena, "Volume: {d}% {s}", .{
+            if (self.tuner.is_muted) 0 else self.tuner.volume,
+            if (self.tuner.is_muted) "[MUTED]" else "",
+        });
+
+        const info_layout = vxfw.FlexColumn{
+            .children = &[_]vxfw.FlexItem{
+                .{ .flex = 0, .widget = (vxfw.Text{ .text = freq_text }).widget() },
+                .{ .flex = 0, .widget = (vxfw.Text{
+                    .text = signal_display,
+                    .style = .{ .fg = vaxis.Color.rgbFromSpec("00FF00") catch .default },
+                }).widget() },
+                .{ .flex = 0, .widget = (vxfw.Text{ .text = volume_text }).widget() },
+            },
+        };
+
+        return info_layout.widget();
+    }
+
+    fn controlsWidget(self: *Self) vxfw.Widget {
+        const controls_layout = vxfw.FlexColumn{
+            .children = &[_]vxfw.FlexItem{
+                // Frequency and band controls
+                .{
+                    .flex = 0,
+                    .widget = (vxfw.FlexRow{
+                        .children = &[_]vxfw.FlexItem{
+                            .{ .flex = 1, .widget = self.tuner.freq_down_button.widget() },
+                            .{ .flex = 1, .widget = self.tuner.freq_up_button.widget() },
+                            .{ .flex = 1, .widget = self.tuner.band_toggle_button.widget() },
+                        },
+                    }).widget(),
+                },
+                // Volume controls
+                .{
+                    .flex = 0,
+                    .widget = (vxfw.FlexRow{
+                        .children = &[_]vxfw.FlexItem{
+                            .{ .flex = 1, .widget = self.tuner.volume_down_button.widget() },
+                            .{ .flex = 1, .widget = self.tuner.mute_button.widget() },
+                            .{ .flex = 1, .widget = self.tuner.volume_up_button.widget() },
+                        },
+                    }).widget(),
+                },
+            },
+        };
+
+        return controls_layout.widget();
+    }
+
+    fn presetsWidget(self: *Self, ctx: vxfw.DrawContext) !vxfw.Widget {
+        // Update preset buttons with current state
+        for (0..6) |i| {
+            self.tuner.preset_buttons[i].label = try std.fmt.allocPrint(ctx.arena, "{d}: {s}\n{d:.1} {s}", .{
+                i + 1,
+                self.tuner.presets[i].name,
+                self.tuner.presets[i].frequency,
+                self.tuner.presets[i].band.getUnit(),
+            });
+
+            if (self.tuner.current_preset == i) {
+                self.tuner.preset_buttons[i].style.default = .{ .fg = .{ .rgb = [_]u8{ 0, 130, 200 } }, .reverse = true };
+            } else {
+                self.tuner.preset_buttons[i].style.default = .{};
+            }
+        }
+
+        const presets_layout = vxfw.FlexColumn{
+            .children = &[_]vxfw.FlexItem{
+                .{ .flex = 0, .widget = (vxfw.Text{ .text = "Presets (Press 1-6):" }).widget() },
+                // First row (presets 1-3)
+                .{
+                    .flex = 0,
+                    .widget = (vxfw.FlexRow{
+                        .children = &[_]vxfw.FlexItem{
+                            .{ .flex = 1, .widget = self.tuner.preset_buttons[0].widget() },
+                            .{ .flex = 1, .widget = self.tuner.preset_buttons[1].widget() },
+                            .{ .flex = 1, .widget = self.tuner.preset_buttons[2].widget() },
+                        },
+                    }).widget(),
+                },
+                // Second row (presets 4-6)
+                .{
+                    .flex = 0,
+                    .widget = (vxfw.FlexRow{
+                        .children = &[_]vxfw.FlexItem{
+                            .{ .flex = 1, .widget = self.tuner.preset_buttons[3].widget() },
+                            .{ .flex = 1, .widget = self.tuner.preset_buttons[4].widget() },
+                            .{ .flex = 1, .widget = self.tuner.preset_buttons[5].widget() },
+                        },
+                    }).widget(),
+                },
+            },
+        };
+
+        return presets_layout.widget();
+    }
+
+    fn statusWidget(self: *Self, ctx: vxfw.DrawContext) !vxfw.Widget {
+        const status_text = try std.fmt.allocPrint(ctx.arena, "Status: {s}", .{self.tuner.status_text});
+        const help_text = "Controls: ↑/↓ Freq | B Band | M Mute | +/- Volume | 1-6 Presets | Q/Ctrl+C Quit";
+
+        const status_layout = vxfw.FlexColumn{
+            .children = &[_]vxfw.FlexItem{
+                .{ .flex = 0, .widget = (vxfw.Text{ .text = status_text }).widget() },
+                .{ .flex = 0, .widget = (vxfw.Text{ .text = help_text }).widget() },
+            },
+        };
+
+        return status_layout.widget();
+    }
+    pub fn widget(self: *Self) vxfw.Widget {
+        return .{
+            .userdata = self,
+            .eventHandler = null,
+            .drawFn = Self.typeErasedDrawFn,
+        };
+    }
+
+    fn typeErasedDrawFn(ptr: *anyopaque, ctx: vxfw.DrawContext) std.mem.Allocator.Error!vxfw.Surface {
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        const max_size = ctx.max.size();
+
+        // Update signal strength from receiver
+        const raw_power = self.tuner.receiver.getPower();
+        if (raw_power <= 0) {
+            self.tuner.signal_strength = 0.0;
+        } else {
+            const dbfs = 10.0 * std.math.log10(raw_power);
+            const normalized = @max(0.0, @min(1.0, (dbfs + 60.0) / 60.0));
+            self.tuner.signal_strength = normalized;
+        }
+        const children = try ctx.arena.alloc(vxfw.SubSurface, 1);
+        children[0] = .{
+            .origin = .{ .row = 0, .col = 0 },
+            .surface = try self.createMainLayout(ctx),
+        };
+
+        // Initialize or get ViewModel
+
+        // Use ViewModel to create the layout and return the surface directly
+        return .{
+            .size = max_size,
+            .widget = self.widget(),
+            .buffer = &.{},
+            .children = children,
+        };
+    }
 };
