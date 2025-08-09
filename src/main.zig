@@ -494,9 +494,17 @@ const RadioTuner = struct {
             self.status_text = "Preset loaded";
         }
     }
-    //TODO: Can this be accurate?
     fn updateSignalStrength(self: *Self) void {
-        self.signal_strength = self.receiver.getPower();
+        const raw_power = self.receiver.getPower();
+        if (raw_power <= 0) {
+            self.signal_strength = 0.0;
+        } else {
+            // Convert to dBFS
+            const dbfs = 10.0 * std.math.log10(raw_power);
+            // Normalize dBFS to 0-1 range (assuming -60dBFS to 0dBFS is useful range)
+            const normalized = @max(0.0, @min(1.0, (dbfs + 60.0) / 60.0));
+            self.signal_strength = normalized;
+        }
     }
 
     // Button callbacks
