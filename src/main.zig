@@ -342,6 +342,27 @@ const Application = struct {
             .surface = try controlRow.draw(ctx),
         });
 
+        // flexbuttons.clearAndFree();
+        // for (&self.preset_buttons) |*preset| {
+        //     try flexbuttons.append(.{ .flex = 1, .widget = preset.widget() });
+        // }
+
+        // const presetsSection = vxfw.FlexColumn{
+        //     .children = &.{
+        //         .{
+        //             .flex = 1,
+        //             .widget = (vxfw.FlexRow{
+        //                 .children = flexbuttons.items[0..3],
+        //             }).widget(),
+        //         },
+        //     },
+        // };
+
+        // try children.append(.{
+        //     .origin = .{ .row = 3, .col = 0 },
+        //     .surface = try presetsSection.draw(ctx),
+        // });
+
         // Presets section
         const presets_title = vxfw.Text{ .text = "Presets (Press 1-6):" };
         try children.append(.{
