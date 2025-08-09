@@ -92,9 +92,10 @@ const RadioTuner = struct {
     // Presets
     presets: [6]RadioPreset,
     preset_buttons: [6]vxfw.Button,
+    current_preset: usize = 0,
 
     // Status
-    status_text: []const u8,
+    status_text: []const u8 = "Setting up",
 
     //radio itself
     receiver: *radio.RadioReceiver,
@@ -108,10 +109,7 @@ const RadioTuner = struct {
         r.* = try .init(alloc, false);
         errdefer r.deinit();
 
-        try r.connect();
-        try r.start();
-
-        var tui = Self{
+        const tui = Self{
             .allocator = alloc,
             .receiver = r,
             .current_band = .FM,
@@ -160,9 +158,7 @@ const RadioTuner = struct {
             .preset_buttons = undefined, // Will be initialized properly
             .status_text = "Ready",
         };
-        try tui.receiver.setGain(@as(f32, @floatFromInt(tui.volume)) / 100);
-        tui.setRxFrequency();
-        tui.updateSignalStrength();
+
         return tui;
     }
 
@@ -170,6 +166,15 @@ const RadioTuner = struct {
         self.receiver.stop() catch unreachable;
         self.receiver.deinit();
         self.allocator.destroy(self.receiver);
+    }
+
+    pub fn start(self: *Self) !void {
+        try self.receiver.connect();
+        try self.receiver.start();
+        try self.receiver.setGain(@as(f32, @floatFromInt(self.volume)) / 100);
+        self.setRxFrequency();
+        self.updateSignalStrength();
+        self.status_text = "Playing";
     }
 
     pub fn initPresetButtons(self: *Self) void {
@@ -194,8 +199,9 @@ const RadioTuner = struct {
         const self: *Self = @ptrCast(@alignCast(ptr));
         switch (event) {
             .init => {
+                try self.start();
                 // Set initial focus to frequency up button
-                return ctx.requestFocus(self.freq_up_button.widget());
+                // return ctx.requestFocus(self.freq_up_button.widget());
             },
             .key_press => |key| {
                 if (key.matches('c', .{ .ctrl = true })) {
@@ -393,6 +399,8 @@ const RadioTuner = struct {
             // Create a button with the preset info
             var preset_button = self.preset_buttons[i];
             preset_button.label = preset_label;
+            if (self.current_preset == i)
+                preset_button.style.default = .{ .fg = .{ .rgb = [_]u8{ 0, 130, 200 } }, .reverse = true };
 
             try children.append(.{
                 .origin = .{ .row = preset_row, .col = preset_col },
@@ -485,6 +493,7 @@ const RadioTuner = struct {
     fn loadPreset(self: *Self, index: usize) void {
         if (index < self.presets.len) {
             const preset = self.presets[index];
+            self.current_preset = index;
             self.current_band = preset.band;
             self.frequency = preset.frequency;
             self.receiver.setFrequency(self.frequency) catch |e| {
