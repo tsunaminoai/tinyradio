@@ -565,3 +565,17 @@ const RadioTuner = struct {
         }
     }
 };
+
+//todo: make a slightly better UI
+const ViewModel = struct {
+    MainSurface: vxfw.FlexColumn = .{
+        .children = &[_]vxfw.FlexItem{
+            .{
+                .flex = 1,
+                .widget = (vxfw.FlexRow{
+                    .children = &[_]vxfw.Button{},
+                }).widget(),
+            },
+        },
+    },
+};
