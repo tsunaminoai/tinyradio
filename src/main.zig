@@ -28,7 +28,7 @@ pub fn main() !void {
         return e;
     };
     defer tuner.deinit();
-    // tui.initPresetButtons();
+    tuner.initPresetButtons();
     // var view = ViewModel.init(allocator, tuner);
 
     // Run the application
@@ -221,7 +221,7 @@ const Application = struct {
                 }
             },
             .focus_in => {
-                return ctx.requestFocus(self.freq_up_button.widget());
+                // return ctx.requestFocus(self.freq_up_button.widget());
             },
             else => {
                 self.updateSignalStrength();
@@ -298,6 +298,10 @@ const Application = struct {
                 },
                 .{
                     .flex = 1,
+                    .widget = (vxfw.Text{ .text = volume_text }).widget(),
+                },
+                .{
+                    .flex = 1,
                     .widget = (vxfw.Text{
                         .text = signal_display,
                         .style = .{
@@ -305,10 +309,6 @@ const Application = struct {
                             .bg = vaxis.Color.rgbFromUint(0x0000FF),
                         },
                     }).widget(),
-                },
-                .{
-                    .flex = 1,
-                    .widget = (vxfw.Text{ .text = volume_text }).widget(),
                 },
             },
         };
@@ -321,68 +321,26 @@ const Application = struct {
             .surface = try statusRow.draw(ctx),
         });
 
-        // Control buttons row
-        const button_width = 12;
-        const button_height = 3;
-        const button_spacing = 14;
-        var col_offset: u16 = 2;
+        const control_buttons = [_]*vxfw.Button{
+            &self.freq_up_button,
+            &self.freq_down_button,
+            &self.band_toggle_button,
+            &self.volume_up_button,
+            &self.volume_down_button,
+            &self.mute_button,
+        };
 
-        // Frequency controls
+        var flexbuttons = Array(vxfw.FlexItem).init(ctx.arena);
+        for (&control_buttons) |button| {
+            try flexbuttons.append(.{ .flex = 1, .widget = button.widget() });
+        }
+        const controlRow = vxfw.FlexRow{
+            .children = flexbuttons.items,
+        };
         try children.append(.{
-            .origin = .{ .row = 7, .col = col_offset },
-            .surface = try self.freq_down_button.draw(ctx.withConstraints(
-                ctx.min,
-                .{ .width = button_width, .height = button_height },
-            )),
+            .origin = .{ .row = 2, .col = 0 },
+            .surface = try controlRow.draw(ctx),
         });
-        col_offset += button_spacing;
-
-        try children.append(.{
-            .origin = .{ .row = 7, .col = col_offset },
-            .surface = try self.freq_up_button.draw(ctx.withConstraints(
-                ctx.min,
-                .{ .width = button_width, .height = button_height },
-            )),
-        });
-        col_offset += button_spacing;
-
-        // Band toggle
-        try children.append(.{
-            .origin = .{ .row = 7, .col = col_offset },
-            .surface = try self.band_toggle_button.draw(ctx.withConstraints(
-                ctx.min,
-                .{ .width = button_width, .height = button_height },
-            )),
-        });
-        col_offset += button_spacing;
-
-        // Volume controls
-        try children.append(.{
-            .origin = .{ .row = 7, .col = col_offset },
-            .surface = try self.volume_down_button.draw(ctx.withConstraints(
-                ctx.min,
-                .{ .width = button_width, .height = button_height },
-            )),
-        });
-        col_offset += button_spacing;
-        // Mute button
-        try children.append(.{
-            .origin = .{ .row = 7, .col = col_offset },
-            .surface = try self.mute_button.draw(ctx.withConstraints(
-                ctx.min,
-                .{ .width = button_width, .height = button_height },
-            )),
-        });
-        col_offset += button_spacing;
-
-        try children.append(.{
-            .origin = .{ .row = 7, .col = col_offset },
-            .surface = try self.volume_up_button.draw(ctx.withConstraints(
-                ctx.min,
-                .{ .width = button_width, .height = button_height },
-            )),
-        });
-        col_offset += button_spacing;
 
         // Presets section
         const presets_title = vxfw.Text{ .text = "Presets (Press 1-6):" };
