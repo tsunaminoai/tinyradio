@@ -6,6 +6,8 @@ A simple software-defined radio (SDR) receiver with a terminal UI, built in Zig.
 
 TinyRadio turns your RTL-SDR dongle into an AM/FM radio with a text-based interface. It's not pretty, it's not optimal, its probably not even acturate, but it makes music come out of the air.
 
+![TinyRadio TUI](image.png)
+
 ## Requirements
 
 - [Zig](https://ziglang.org/download/) (latest version)
