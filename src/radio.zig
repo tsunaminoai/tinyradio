@@ -5,21 +5,24 @@ const tst = std.testing;
 const math = std.math;
 const radio = @import("radio");
 const rl = @import("raylib");
+const wbfm = @import("fm_rds.zig");
 
 pub const RadioReceiver = struct {
     allocator: std.mem.Allocator,
     flowgraph: radio.Flowgraph,
     source: radio.blocks.RtlSdrSource,
-    sink: radio.blocks.PulseAudioSink(1),
+    sink: radio.blocks.PulseAudioSink(2),
 
     // base nodes
     tuner: radio.blocks.TunerBlock,
-    af_gain: GainBlock,
+    af_gain_left: GainBlock,
+    af_gain_right: GainBlock,
     power_meter: radio.blocks.PowerMeterBlock(f32),
     agc: radio.blocks.AGCBlock(f32),
 
     // demodulators
     fm: radio.blocks.WBFMMonoDemodulatorBlock,
+    fm_stereo: wbfm.WBFMDemodulatorWithRDS,
     am: radio.blocks.AMEnvelopeDemodulatorBlock,
     debug: bool = false,
 
@@ -31,12 +34,15 @@ pub const RadioReceiver = struct {
             .debug = debug,
             .flowgraph = radio.Flowgraph.init(allocator, .{ .debug = debug }),
             .source = undefined,
-            .sink = radio.blocks.PulseAudioSink(1).init(),
+            .sink = radio.blocks.PulseAudioSink(2).init(),
             .tuner = radio.blocks.TunerBlock.init(tune_offset, 200e3, 4),
-            .af_gain = GainBlock.init(0.3),
+            .af_gain_left = GainBlock.init(0.3),
+            .af_gain_right = GainBlock.init(0.3),
             .fm = .init(.{}),
+            .fm_stereo = try .init(),
             .am = .init(.{}),
             .power_meter = .init(50, .{}),
+
             .agc = radio.blocks.AGCBlock(f32).init(.{ .preset = .Fast }, .{}),
         };
         errdefer r.source.deinitialize(allocator);
@@ -56,16 +62,16 @@ pub const RadioReceiver = struct {
 
     fn setupRTL(self: *RadioReceiver, band: Band) !void {
         self.source = switch (band) {
-            .FM => radio.blocks.RtlSdrSource.init(
+            .FM, .FM_Stereo => radio.blocks.RtlSdrSource.init(
                 91.9e6,
-                2.4e6, // 2.4 MS/s
+                960_000, // 2.4 MS/s
                 .{
                     .rf_gain = 30.0,
                 },
             ),
             .AM => radio.blocks.RtlSdrSource.init(
                 1450e3,
-                2.4e6, // Sample rate
+                960_000, // Sample rate
                 .{
                     .direct_sampling = .Q, // Enable direct sampling
                     .rf_gain = 30.0,
@@ -83,6 +89,7 @@ pub const RadioReceiver = struct {
             wasRunning = true;
             self.flowgraph.deinit();
             self.flowgraph = .init(self.allocator, .{ .debug = self.debug });
+            try self.fm_stereo.connect(&self.flowgraph);
         }
         try self.setupRTL(band);
 
@@ -92,15 +99,26 @@ pub const RadioReceiver = struct {
             .FM => {
                 try self.flowgraph.connectPort(&self.tuner.block, "out1", &self.fm.block, "in1");
                 try self.flowgraph.connectPort(&self.fm.block, "out1", &self.power_meter.block, "in1");
-                try self.flowgraph.connectPort(&self.fm.block, "out1", &self.af_gain.block, "in1");
+                try self.flowgraph.connectPort(&self.fm.block, "out1", &self.af_gain_left.block, "in1");
+                try self.flowgraph.connectPort(&self.fm.block, "out1", &self.af_gain_right.block, "in1");
+                try self.flowgraph.connectPort(&self.af_gain_left.block, "out1", &self.sink.block, "in1");
+                try self.flowgraph.connectPort(&self.af_gain_right.block, "out1", &self.sink.block, "in2");
             },
             .AM => {
                 try self.flowgraph.connectPort(&self.tuner.block, "out1", &self.am.block, "in1");
-                try self.flowgraph.connectPort(&self.am.block, "out1", &self.power_meter.block, "in1");
-                try self.flowgraph.connectPort(&self.am.block, "out1", &self.af_gain.block, "in1");
+                try self.flowgraph.connectPort(&self.am.block, "out1", &self.af_gain_left.block, "in1");
+                try self.flowgraph.connectPort(&self.am.block, "out1", &self.af_gain_right.block, "in1");
+                try self.flowgraph.connectPort(&self.af_gain_left.block, "out1", &self.sink.block, "in1");
+                try self.flowgraph.connectPort(&self.af_gain_right.block, "out1", &self.sink.block, "in2");
+            },
+            .FM_Stereo => {
+                try self.flowgraph.connectPort(&self.tuner.block, "out1", &self.fm_stereo.block, "in1");
+                try self.flowgraph.connectPort(&self.fm_stereo.block, "out1", &self.af_gain_left.block, "in1");
+                try self.flowgraph.connectPort(&self.fm_stereo.block, "out2", &self.af_gain_right.block, "in1");
+                try self.flowgraph.connectPort(&self.af_gain_left.block, "out1", &self.sink.block, "in1");
+                try self.flowgraph.connectPort(&self.af_gain_right.block, "out1", &self.sink.block, "in2");
             },
         }
-        try self.flowgraph.connect(&self.af_gain.block, &self.sink.block);
         if (wasRunning)
             try self.flowgraph.start();
     }
@@ -110,7 +128,8 @@ pub const RadioReceiver = struct {
     }
 
     pub fn setGain(self: *RadioReceiver, linear_gain: f32) !void {
-        self.af_gain.setGain(linear_gain); // Set gain in dB
+        self.af_gain_left.setGain(linear_gain); // Set gain in dB
+        self.af_gain_right.setGain(linear_gain); // Set gain in dB
     }
 
     pub fn start(self: *RadioReceiver) !void {
@@ -137,9 +156,9 @@ test {
     var r = try RadioReceiver.init(tst.allocator, true);
     defer r.deinit();
 
-    try r.connect();
+    try r.connect(.FM);
     try r.start();
-    radio.platform.waitForInterrupt();
+    // radio.platform.waitForInterrupt();
     try r.stop();
 }
 
@@ -180,32 +199,37 @@ pub const Band =
     enum {
         AM,
         FM,
+        FM_Stereo,
 
         pub fn getRange(self: Band) struct { min: f32, max: f32 } {
             return switch (self) {
                 .AM => .{ .min = 530.0, .max = 1710.0 }, // kHz
-                .FM => .{ .min = 88.1, .max = 108.0 }, // MHz
+                .FM, .FM_Stereo => .{ .min = 88.1, .max = 108.0 }, // MHz
             };
         }
 
         pub fn getDefaultFreq(self: Band) f32 {
             return switch (self) {
                 .AM => 1450.0,
-                .FM => 91.9,
+                .FM, .FM_Stereo => 91.9,
             };
         }
 
         pub fn getStepSize(self: Band) f32 {
             return switch (self) {
                 .AM => 10.0, // 10 kHz steps
-                .FM => 0.1, // 0.1 MHz steps
+                .FM, .FM_Stereo => 0.1, // 0.1 MHz steps
             };
         }
 
         pub fn getUnit(self: Band) []const u8 {
             return switch (self) {
                 .AM => "kHz",
-                .FM => "MHz",
+                .FM, .FM_Stereo => "MHz",
             };
         }
     };
+
+test {
+    tst.refAllDecls(@This());
+}

@@ -74,7 +74,7 @@ const RadioTuner = struct {
     pub fn init(alloc: Allocator) !Self {
         const r = try alloc.create(radio.RadioReceiver);
         errdefer alloc.destroy(r);
-        r.* = try .init(alloc, !builtins.strip_debug_info);
+        r.* = try .init(alloc, false);
         errdefer r.deinit();
 
         const tui = Self{
@@ -116,11 +116,11 @@ const RadioTuner = struct {
                 .userdata = null,
             },
             .presets = [_]RadioPreset{
-                .{ .frequency = 91.9, .name = "Jeff 92", .band = .FM },
+                .{ .frequency = 91.9, .name = "Jeff 92", .band = .FM_Stereo },
                 .{ .frequency = 920.0, .name = "WBAA News", .band = .AM },
-                .{ .frequency = 101.3, .name = "WBAA Jazz", .band = .FM },
-                .{ .frequency = 98.7, .name = "WASK Classic Hits", .band = .FM },
-                .{ .frequency = 93.5, .name = "KHY Rock", .band = .FM },
+                .{ .frequency = 101.3, .name = "WBAA Jazz", .band = .FM_Stereo },
+                .{ .frequency = 98.7, .name = "WASK Classic Hits", .band = .FM_Stereo },
+                .{ .frequency = 93.5, .name = "KHY Rock", .band = .FM_Stereo },
                 .{ .frequency = 1450.0, .name = "WASK", .band = .AM },
             },
             .preset_buttons = undefined, // Will be initialized properly
@@ -282,8 +282,8 @@ const RadioTuner = struct {
         const signal_text = vxfw.Text{
             .text = signal_display,
             .style = .{
-                .fg = vaxis.Color.rgbFromSpec("00FF00") catch unreachable,
-                .bg = vaxis.Color.rgbFromSpec("0000FF") catch unreachable,
+                .fg = vaxis.Color.rgbFromUint(0x00ff00),
+                .bg = vaxis.Color.rgbFromUint(0x0000ff),
             },
         };
         try children.append(.{
@@ -444,11 +444,11 @@ const RadioTuner = struct {
             std.log.err("Could not set frequency: {}\n", .{e});
         };
     }
-    // TODO: Add AM chain
     fn toggleBand(self: *Self) void {
         self.current_band = switch (self.current_band) {
             .AM => .FM,
-            .FM => .AM,
+            .FM => .FM_Stereo,
+            .FM_Stereo => .AM,
         };
         self.receiver.connect(self.current_band) catch unreachable;
         self.frequency = self.current_band.getDefaultFreq();
@@ -579,3 +579,7 @@ const ViewModel = struct {
         },
     },
 };
+
+test {
+    tst.refAllDecls(@This());
+}
