@@ -19,7 +19,7 @@ TinyRadio turns your RTL-SDR dongle into an AM/FM radio with a text-based interf
 ## Devbox
 
 ```bash
-devbox shell
+devbox run run
 ```
 
 ## Running
