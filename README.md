@@ -43,7 +43,7 @@ This project is powered by the excellent [zigradio](https://github.com/vsergeev/
 
 ## License
 
-MIT License - see the code, hack it, break it, fix it, share it.
+[MIT License](LICENSE) - see the code, hack it, break it, fix it, share it.
 
 ## Note
 
