@@ -10,19 +10,21 @@ TinyRadio turns your RTL-SDR dongle into an AM/FM radio with a text-based interf
 
 ## Requirements
 
+These are included in the devbox shell
+
 - [Zig](https://ziglang.org/download/) (latest version)
 - RTL-SDR dongle and drivers (`librtlsdr`)
 - PulseAudio (Linux)
 
-### Installing RTL-SDR drivers
+### Running TinyRadio
 
-## Devbox
+## With Devbox
 
 ```bash
 devbox run run
 ```
 
-## Running
+## With Zig
 
 ```bash
 zig build -Doptimize=ReleaseFast run
