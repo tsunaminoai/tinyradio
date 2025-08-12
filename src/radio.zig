@@ -4,8 +4,6 @@ const Allocator = std.mem.Allocator;
 const tst = std.testing;
 const math = std.math;
 const radio = @import("radio");
-const rl = @import("raylib");
-const wbfm = @import("fm_rds.zig");
 
 pub const RadioReceiver = struct {
     allocator: std.mem.Allocator,
@@ -22,7 +20,7 @@ pub const RadioReceiver = struct {
 
     // demodulators
     fm: radio.blocks.WBFMMonoDemodulatorBlock,
-    fm_stereo: wbfm.WBFMDemodulatorWithRDS,
+    fm_stereo: radio.blocks.WBFMStereoDemodulatorBlock,
     am: radio.blocks.AMEnvelopeDemodulatorBlock,
     debug: bool = false,
 
@@ -39,7 +37,7 @@ pub const RadioReceiver = struct {
             .af_gain_left = GainBlock.init(0.3),
             .af_gain_right = GainBlock.init(0.3),
             .fm = .init(.{}),
-            .fm_stereo = try .init(),
+            .fm_stereo = .init(.{}),
             .am = .init(.{}),
             .power_meter = .init(50, .{}),
 
@@ -64,14 +62,14 @@ pub const RadioReceiver = struct {
         self.source = switch (band) {
             .FM, .FM_Stereo => radio.blocks.RtlSdrSource.init(
                 91.9e6,
-                960_000, // 2.4 MS/s
+                1_200_000,
                 .{
                     .rf_gain = 30.0,
                 },
             ),
             .AM => radio.blocks.RtlSdrSource.init(
                 1450e3,
-                960_000, // Sample rate
+                960_000,
                 .{
                     .direct_sampling = .Q, // Enable direct sampling
                     .rf_gain = 30.0,
@@ -89,7 +87,6 @@ pub const RadioReceiver = struct {
             wasRunning = true;
             self.flowgraph.deinit();
             self.flowgraph = .init(self.allocator, .{ .debug = self.debug });
-            try self.fm_stereo.connect(&self.flowgraph);
         }
         try self.setupRTL(band);
 
