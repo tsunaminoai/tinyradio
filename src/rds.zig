@@ -83,7 +83,7 @@ pub const RDS = struct {
         try fg.connect(&self.framer.block, &self.decoder.block);
 
         try fg.alias(&self.block, "in1", &self.fm_demod.block, "in1");
-        // try fg.alias(&self.block, "out1", &self.decoder.block, "out1");
+        try fg.alias(&self.block, "out1", &self.decoder.block, "out1");
     }
 
     pub fn setFrequency(self: *RDS, freq: f32) !void {
@@ -175,7 +175,7 @@ pub const RDSDecoderBlock = struct {
         };
     }
 
-    pub fn process(self: *Self, input: []const u8) !radio.ProcessResult {
+    pub fn process(self: *Self, input: []const u8, output: []RDSData) !radio.ProcessResult {
         // Input should be 13 bytes (104 bits) representing one RDS group
         if (input.len < 13) {
             self.error_count += 1;
@@ -293,8 +293,20 @@ pub const RDSDecoderBlock = struct {
         }
 
         self.groups_decoded += 1;
+        output[0] = self.getRDSData();
 
-        return radio.ProcessResult.init(&[1]usize{input.len}, &[0]usize{});
+        return radio.ProcessResult.init(&[1]usize{input.len}, &[1]usize{1});
+    }
+
+    pub fn getRDSData(self: *Self) RDSData {
+        return RDSData{
+            .pi_code = self.pi_code,
+            .ps_name = &self.ps_name,
+            .radio_text = &self.radio_text,
+            .pty = self.pty,
+            .tp = self.tp,
+            .ta = self.ta,
+        };
     }
 
     fn extractBlock(self: *Self, bytes: []const u8) u16 {
@@ -1020,9 +1032,11 @@ test "RDS" {
     var rds = try RDS.init(tst.allocator, .{ .frequency = 88.1e6 });
     defer rds.deinit();
 
+    var sink = radio.blocks.JSONStreamSink(RDSDecoderBlock.RDSData).init(std.io.getStdErr().writer().any(), .{});
     // Connect the IQ source to the RDS decoder
     try fg.connect(&iq.block, &tuner.block);
     try fg.connect(&tuner.block, &rds.block);
+    try fg.connect(&rds.block, &sink.block);
 
     try fg.start();
 
