@@ -23,27 +23,51 @@ pub const RDS = struct {
     sampler: SamplerBlock,
     bp_corrector: BinaryPhaseCorrectorBlock,
     bit_demod: radio.blocks.ComplexToRealBlock,
-    bit_slicer: radio.blocks.SlicerBlock(void),
+    bit_slicer: radio.blocks.SlicerBlock(radio.blocks.BinarySlicer),
     bit_decoder: DifferentialManchesterDecoderBlock,
     bit_diff_decode: radio.blocks.DifferentialDecoderBlock(false),
     framer: RDSFramerBlock,
     decoder: RDSDecoderBlock,
-    sink: radio.blocks.JSONStreamSink(void),
 
-    pub fn init(options: anytype) RDS {
+    pub fn init(alloc: Allocator, options: anytype) !RDS {
         return RDS{
             .frequency = options.frequency,
             .block = .init(RDS, &.{"in1"}, &.{"out1"}),
+
+            .fm_demod = .init(1.25),
+            .hilbert = try .init(alloc, 129),
+            .mixer_delay = .init(129),
+            .pilot_filter = .init(.{ 18e3, 20e3 }, .{}),
+            .pll_baseband = .init(1500, .{ 19e3 - 100, 19e3 + 100 }, .{ .multiplier = 3.0 }),
+            .mixer = .init(),
+            .bb_filter = .init(128, .{ .nyquist = 4e3 }),
+            .bb_rrc = .init(200), //todo REDO
+            .ck_demod = .init(),
+            .ck_recover = .init(1187.5 * 2, 44_000),
+            .sampler = try .init(alloc),
+            .bp_corrector = .init(8e3),
+            .bit_demod = .init(),
+            .bit_slicer = .init(),
+            .bit_decoder = .init(alloc),
+            .bit_diff_decode = .init(),
+            .framer = .init(alloc),
+            .decoder = .init(alloc),
         };
+    }
+
+    pub fn deinit(self: *RDS) void {
+        self.hilbert.deinit();
+        self.sampler.deinit();
+        // Other blocks that need deinitialization can be added here
     }
 
     pub fn connect(self: *RDS, fg: *radio.Flowgraph) !void {
         try fg.connect(&self.fm_demod.block, &self.hilbert.block);
-        try fg.connect(&self.hilbert.block, &self.mixer_delay.block);
+        try fg.connect(&self.fm_demod.block, &self.mixer_delay.block); // Connect FM demod directly to delay
         try fg.connect(&self.hilbert.block, &self.pilot_filter.block);
         try fg.connect(&self.pilot_filter.block, &self.pll_baseband.block);
-        try fg.connectPort(&self.mixer_delay.block, "out1", &self.mixer, "in1");
-        try fg.connectPort(&self.pll_baseband.block, "out1", &self.mixer, "in2");
+        try fg.connectPort(&self.mixer_delay.block, "out1", &self.mixer.block, "in1");
+        try fg.connectPort(&self.pll_baseband.block, "out1", &self.mixer.block, "in2");
         try fg.connect(&self.mixer.block, &self.bb_filter.block);
         try fg.connect(&self.bb_filter.block, &self.bb_rrc.block);
         try fg.connect(&self.bb_rrc.block, &self.bp_corrector.block);
@@ -57,10 +81,9 @@ pub const RDS = struct {
         try fg.connect(&self.bit_decoder.block, &self.bit_diff_decode.block);
         try fg.connect(&self.bit_diff_decode.block, &self.framer.block);
         try fg.connect(&self.framer.block, &self.decoder.block);
-        try fg.connect(&self.decoder.block, &self.sink.block);
 
         try fg.alias(&self.block, "in1", &self.fm_demod.block, "in1");
-        try fg.alias(&self.block, "out1", &self.sink.block, "out1");
+        // try fg.alias(&self.block, "out1", &self.decoder.block, "out1");
     }
 
     pub fn setFrequency(self: *RDS, freq: f32) !void {
@@ -69,8 +92,343 @@ pub const RDS = struct {
 };
 
 /// https://github.com/vsergeev/luaradio/blob/master/radio/blocks/protocol/rdsdecoder.lua
+// RDS Decoder Block - decodes RDS groups and extracts information
 pub const RDSDecoderBlock = struct {
     block: radio.Block,
+    allocator: std.mem.Allocator,
+
+    // RDS data storage
+    pi_code: u16,
+    pty: u8,
+    tp: bool,
+    ta: bool,
+    ms: bool,
+    di: u4,
+
+    // Program Service name (8 characters)
+    ps_name: [8]u8,
+    ps_segments: [4][2]u8, // 4 segments of 2 chars each
+    ps_segment_flags: u4, // Which segments have been received
+
+    // RadioText (64 characters for type A, 32 for type B)
+    radio_text: [64]u8,
+    rt_segments: [16][4]u8, // Type A: 16 segments of 4 chars
+    rt_segment_flags: u16,
+    rt_ab_flag: bool,
+
+    // Alternative frequencies
+    af_list: [25]u8,
+    af_count: usize,
+
+    // Clock time
+    clock_time: struct {
+        hours: u8,
+        minutes: u8,
+        mjd: u32, // Modified Julian Day
+    },
+
+    // Statistics
+    groups_decoded: u32,
+    error_count: u32,
+
+    const Self = @This();
+
+    pub const RDSData = struct {
+        pi_code: u16,
+        ps_name: []const u8,
+        radio_text: []const u8,
+        pty: u8,
+        tp: bool,
+        ta: bool,
+
+        pub fn typeName() []const u8 {
+            return "RDSData";
+        }
+    };
+
+    pub fn init(allocator: std.mem.Allocator) RDSDecoderBlock {
+        return .{
+            .block = radio.Block.init(RDSDecoderBlock),
+            .allocator = allocator,
+            .pi_code = 0,
+            .pty = 0,
+            .tp = false,
+            .ta = false,
+            .ms = false,
+            .di = 0,
+            .ps_name = [_]u8{' '} ** 8,
+            .ps_segments = [_][2]u8{[_]u8{' '} ** 2} ** 4,
+            .ps_segment_flags = 0,
+            .radio_text = [_]u8{' '} ** 64,
+            .rt_segments = [_][4]u8{[_]u8{' '} ** 4} ** 16,
+            .rt_segment_flags = 0,
+            .rt_ab_flag = false,
+            .af_list = [_]u8{0} ** 25,
+            .af_count = 0,
+            .clock_time = .{
+                .hours = 0,
+                .minutes = 0,
+                .mjd = 0,
+            },
+            .groups_decoded = 0,
+            .error_count = 0,
+        };
+    }
+
+    pub fn process(self: *Self, input: []const u8) !radio.ProcessResult {
+        // Input should be 13 bytes (104 bits) representing one RDS group
+        if (input.len < 13) {
+            self.error_count += 1;
+            return error.InvalidInput;
+        }
+
+        // Extract the 4 blocks (A, B, C, D) from the frame
+        // Each block is 26 bits: 16 bits data + 10 bits checkword
+        const block_a = self.extractBlock(input[0..4]);
+        const block_b = self.extractBlock(input[3..7]);
+        const block_c = self.extractBlock(input[6..10]);
+        const block_d = self.extractBlock(input[9..13]);
+
+        // Block A is always the PI code
+        self.pi_code = block_a;
+
+        // Block B contains group type and version
+        const group_type = @as(u8, @intCast((block_b >> 12) & 0x0F));
+        const version = @as(u1, @intCast((block_b >> 11) & 0x01)); // 0 = A, 1 = B
+        self.tp = (block_b >> 10) & 0x01 == 1;
+        self.pty = @as(u8, @intCast((block_b >> 5) & 0x1F));
+
+        // Process based on group type
+        switch (group_type) {
+            0 => {
+                // Group 0A/0B: Basic tuning and switching information
+                self.ta = (block_b >> 4) & 0x01 == 1;
+                self.ms = (block_b >> 3) & 0x01 == 1;
+                const di_bit = @as(u1, @intCast((block_b >> 2) & 0x01));
+                const ps_index = @as(u2, @intCast(block_b & 0x03));
+
+                // Update DI bit
+                self.di = (self.di & ~(@as(u4, 1) << ps_index)) | (@as(u4, di_bit) << ps_index);
+
+                // Store PS name segment
+                self.ps_segments[ps_index][0] = @as(u8, @intCast((block_d >> 8) & 0xFF));
+                self.ps_segments[ps_index][1] = @as(u8, @intCast(block_d & 0xFF));
+                self.ps_segment_flags |= @as(u4, 1) << ps_index;
+
+                // If we have all segments, update PS name
+                if (self.ps_segment_flags == 0x0F) {
+                    for (0..4) |i| {
+                        self.ps_name[i * 2] = self.ps_segments[i][0];
+                        self.ps_name[i * 2 + 1] = self.ps_segments[i][1];
+                    }
+                }
+
+                // Handle alternative frequencies in version A
+                if (version == 0) {
+                    self.processAF(block_c);
+                }
+            },
+            1 => {
+                // Group 1A/1B: Program Item Number
+                // Not commonly used, skip for now
+            },
+            2 => {
+                // Group 2A/2B: RadioText
+                const text_ab = @as(u1, @intCast((block_b >> 4) & 0x01));
+                const text_index = @as(u4, @intCast(block_b & 0x0F));
+
+                // Check if A/B flag changed (indicates new message)
+                if (text_ab != @intFromBool(self.rt_ab_flag)) {
+                    self.rt_ab_flag = text_ab == 1;
+                    self.rt_segment_flags = 0;
+                    self.radio_text = [_]u8{' '} ** 64;
+                }
+
+                if (version == 0) {
+                    // Type 2A: 64-character RadioText
+                    if (text_index < 16) {
+                        const idx = text_index * 4;
+                        self.radio_text[idx] = @as(u8, @intCast((block_c >> 8) & 0xFF));
+                        self.radio_text[idx + 1] = @as(u8, @intCast(block_c & 0xFF));
+                        self.radio_text[idx + 2] = @as(u8, @intCast((block_d >> 8) & 0xFF));
+                        self.radio_text[idx + 3] = @as(u8, @intCast(block_d & 0xFF));
+                        self.rt_segment_flags |= @as(u16, 1) << text_index;
+                    }
+                } else {
+                    // Type 2B: 32-character RadioText
+                    if (text_index < 8) {
+                        const idx = text_index * 2;
+                        self.radio_text[idx] = @as(u8, @intCast((block_d >> 8) & 0xFF));
+                        self.radio_text[idx + 1] = @as(u8, @intCast(block_d & 0xFF));
+                        self.rt_segment_flags |= @as(u16, 1) << text_index;
+                    }
+                }
+            },
+            3 => {
+                // Group 3A: Application identification for Open Data
+                // Group 3B: Open data application
+            },
+            4 => {
+                // Group 4A: Clock-time and date
+                if (version == 0) {
+                    const mjd = (@as(u32, @intCast((block_b & 0x03))) << 15) |
+                        (@as(u32, @intCast(block_c >> 1)));
+                    const hours = @as(u8, @intCast(((block_c & 0x01) << 4) | ((block_d >> 12) & 0x0F)));
+                    const minutes = @as(u8, @intCast((block_d >> 6) & 0x3F));
+
+                    self.clock_time.mjd = mjd;
+                    self.clock_time.hours = hours;
+                    self.clock_time.minutes = minutes;
+                }
+            },
+            10 => {
+                // Group 10A: Program Type Name (PTYN)
+                const ptyn_index = @as(u1, @intCast(block_b & 0x01));
+                _ = ptyn_index;
+                // Store PTYN characters (8 chars total)
+            },
+            else => {
+                // Other group types not implemented
+            },
+        }
+
+        self.groups_decoded += 1;
+
+        return radio.ProcessResult.init(&[1]usize{input.len}, &[0]usize{});
+    }
+
+    fn extractBlock(self: *Self, bytes: []const u8) u16 {
+        _ = self;
+        // Extract 16-bit data word from block (first 16 bits)
+        // In real implementation, would also check/correct with syndrome
+        if (bytes.len < 2) return 0;
+        return (@as(u16, bytes[0]) << 8) | @as(u16, bytes[1]);
+    }
+
+    fn processAF(self: *Self, af_data: u16) void {
+        const af1 = @as(u8, @intCast((af_data >> 8) & 0xFF));
+        const af2 = @as(u8, @intCast(af_data & 0xFF));
+
+        // AF codes 1-204 represent frequencies
+        // 205-223 are filler codes
+        // 224-249 indicate number of AFs
+        // 250 = LF/MF frequency follows
+
+        if (af1 >= 224 and af1 <= 249) {
+            // Number of AFs
+            const num_afs = af1 - 224;
+            _ = num_afs;
+            // Reset AF list
+            self.af_count = 0;
+        } else if (af1 <= 204 and self.af_count < self.af_list.len) {
+            self.af_list[self.af_count] = af1;
+            self.af_count += 1;
+        }
+
+        if (af2 <= 204 and self.af_count < self.af_list.len) {
+            self.af_list[self.af_count] = af2;
+            self.af_count += 1;
+        }
+    }
+
+    pub fn getProgramService(self: *Self) []const u8 {
+        return &self.ps_name;
+    }
+
+    pub fn getRadioText(self: *Self) []const u8 {
+        // Find the end of the radio text (look for CR or null terminator)
+        for (self.radio_text, 0..) |char, i| {
+            if (char == 0x0D or char == 0) {
+                return self.radio_text[0..i];
+            }
+        }
+        return &self.radio_text;
+    }
+
+    pub fn getProgramType(self: *Self) []const u8 {
+        // Return PTY description based on code
+        return switch (self.pty) {
+            0 => "None",
+            1 => "News",
+            2 => "Information",
+            3 => "Sports",
+            4 => "Talk",
+            5 => "Rock",
+            6 => "Classic Rock",
+            7 => "Adult Hits",
+            8 => "Soft Rock",
+            9 => "Top 40",
+            10 => "Country",
+            11 => "Oldies",
+            12 => "Soft",
+            13 => "Nostalgia",
+            14 => "Jazz",
+            15 => "Classical",
+            16 => "Rhythm and Blues",
+            17 => "Soft R&B",
+            18 => "Foreign Language",
+            19 => "Religious Music",
+            20 => "Religious Talk",
+            21 => "Personality",
+            22 => "Public",
+            23 => "College",
+            24 => "Spanish Talk",
+            25 => "Spanish Music",
+            26 => "Hip Hop",
+            29 => "Weather",
+            30 => "Emergency Test",
+            31 => "Emergency",
+            else => "Unknown",
+        };
+    }
+
+    pub fn getAlternativeFrequencies(self: *Self) []f32 {
+        var frequencies: [25]f32 = undefined;
+        var count: usize = 0;
+
+        for (self.af_list[0..self.af_count]) |af_code| {
+            if (af_code >= 1 and af_code <= 204) {
+                // Convert AF code to frequency
+                // 1-204 corresponds to 87.6-107.9 MHz in 0.1 MHz steps
+                frequencies[count] = 87.5 + @as(f32, @floatFromInt(af_code)) * 0.1;
+                count += 1;
+            }
+        }
+
+        return frequencies[0..count];
+    }
+
+    pub fn formatTime(self: *Self) ![]u8 {
+        if (self.clock_time.mjd == 0) {
+            return error.NoTimeAvailable;
+        }
+
+        // Convert MJD to year, month, day
+        const mjd = self.clock_time.mjd;
+        const j = mjd + 2400001 + 68569;
+        const n = 4 * j / 146097;
+        const j2 = j - (146097 * n + 3) / 4;
+        const i = 4000 * (j2 + 1) / 1461001;
+        const j3 = j2 - 1461 * i / 4 + 31;
+        const k = 80 * j3 / 2447;
+        const day = j3 - 2447 * k / 80;
+        const l = k / 11;
+        const month = k + 2 - 12 * l;
+        const year = 100 * (n - 49) + i + l;
+
+        _ = year;
+        _ = month;
+        _ = day;
+
+        // Format as string
+        var buffer: [32]u8 = undefined;
+        const result = std.fmt.bufPrint(&buffer, "{d:0>2}:{d:0>2}", .{
+            self.clock_time.hours,
+            self.clock_time.minutes,
+        }) catch return error.FormattingError;
+
+        return self.allocator.dupe(u8, result) catch return error.OutOfMemory;
+    }
 };
 
 /// https://github.com/vsergeev/luaradio/blob/master/radio/blocks/protocol/rdsframer.lua
@@ -104,7 +462,7 @@ pub const RDSFramerBlock = struct {
             .allocator = allocator,
         };
     }
-    pub fn process(self: *RDSFramerBlock, x: []const f32, y: [][]const u8) !radio.ProcessResult {
+    pub fn process(self: *RDSFramerBlock, x: []const f32, y: []u8) !radio.ProcessResult {
         var frames_out: usize = 0;
 
         for (x) |sample| {
@@ -149,7 +507,7 @@ pub const RDSFramerBlock = struct {
                                 }
                                 frame_bytes[byte_idx] = byte;
                             }
-                            y[frames_out] = &frame_bytes;
+                            @memcpy(y[frames_out * FrameLen .. (frames_out + 1) * FrameLen], &frame_bytes);
                             frames_out += 1;
                         }
 
@@ -426,7 +784,7 @@ pub const ZeroCrossingClockRecoveryBlock = struct {
 
     const Self = @This();
 
-    pub fn init(symbol_rate: f32, sample_rate: f32) ZeroCrossingClockRecoveryBlock {
+    pub fn init(symbol_rate: f32, sample_rate: f32) Self {
         const samples_per_symbol = sample_rate / symbol_rate;
         return .{
             .block = radio.Block.init(Self),
@@ -659,9 +1017,16 @@ test "RDS" {
 
     var iq = radio.blocks.IQStreamSource.init(reader.any(), .f32be, 44_000, .{});
 
-    var rds = RDS.init(.{ .frequency = 88.1e6 });
+    var rds = try RDS.init(tst.allocator, .{ .frequency = 88.1e6 });
+    defer rds.deinit();
+
+    // Connect the IQ source to the RDS decoder
     try fg.connect(&iq.block, &rds.block);
+
     try fg.start();
-    radio.platform.waitForInterrupt();
+
+    // Run for a short time to test
+    std.time.sleep(100 * std.time.ns_per_ms);
+
     _ = try fg.stop();
 }
