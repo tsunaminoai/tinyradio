@@ -63,7 +63,7 @@ pub const RDS = struct {
 
     pub fn connect(self: *RDS, fg: *radio.Flowgraph) !void {
         try fg.connect(&self.fm_demod.block, &self.hilbert.block);
-        try fg.connect(&self.fm_demod.block, &self.mixer_delay.block); // Connect FM demod directly to delay
+        try fg.connect(&self.hilbert.block, &self.mixer_delay.block);
         try fg.connect(&self.hilbert.block, &self.pilot_filter.block);
         try fg.connect(&self.pilot_filter.block, &self.pll_baseband.block);
         try fg.connectPort(&self.mixer_delay.block, "out1", &self.mixer.block, "in1");
@@ -1016,12 +1016,13 @@ test "RDS" {
     const reader = iq_file.reader();
 
     var iq = radio.blocks.IQStreamSource.init(reader.any(), .f32be, 44_000, .{});
-
+    var tuner = radio.blocks.TunerBlock.init(0, 1_200_000, 2);
     var rds = try RDS.init(tst.allocator, .{ .frequency = 88.1e6 });
     defer rds.deinit();
 
     // Connect the IQ source to the RDS decoder
-    try fg.connect(&iq.block, &rds.block);
+    try fg.connect(&iq.block, &tuner.block);
+    try fg.connect(&tuner.block, &rds.block);
 
     try fg.start();
 
