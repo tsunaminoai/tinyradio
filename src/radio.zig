@@ -190,6 +190,53 @@ pub const GainBlock = struct {
         return radio.ProcessResult.init(&[1]usize{input.len}, &[1]usize{idx});
     }
 };
+/// https://luaradio.io/examples/rtlsdr-rds.html
+pub const RDS = struct {
+    block: radio.CompositeBlock,
+    frequency: f32,
+
+    // hilbert: radio.bloc
+    mixer_delay: radio.blocks.DelayBlock(f32),
+    pilot_filter: radio.blocks.ComplexBandpassFilterBlock(129),
+    pll_baseband: radio.blocks.ComplexPLLBlock,
+    mixer: radio.blocks.MultiplyConjugateBlock,
+    bb_filter: radio.blocks.LowpassFilterBlock(math.Complex(f32), 128),
+    bb_rrc: radio.blocks.RectangularMatchedFilterBlock,
+    ck_demod: radio.blocks.ComplexToRealBlock,
+    // ck_recover = radio.blocks.c
+    // sampler = radio.blocks.
+    bit_demod: radio.blocks.ComplexToRealBlock,
+    bit_decode: radio.blocks.SlicerBlock(.{}),
+    bit_diff_decode: radio.blocks.DifferentialDecoderBlock(false),
+    framer: void,
+    decoder: void,
+    sink: radio.blocks.JSONStreamSink(.{}),
+
+    pub fn init(options: anytype) RDS {
+        return RDS{
+            .frequency = options.frequency,
+            .block = .init(RDS, &.{"in1"}, &.{"out1"}),
+        };
+    }
+
+    pub fn connect(self: *RDS, fg: *radio.Flowgraph) !void {
+        _ = self; // autofix
+        _ = fg; // autofix
+        // top:connect(source, tuner, fm_demod, hilbert, mixer_delay)
+        // top:connect(hilbert, pilot_filter, pll_baseband)
+        // top:connect(mixer_delay, 'out', mixer, 'in1')
+        // top:connect(pll_baseband, 'out', mixer, 'in2')
+        // top:connect(mixer, baseband_filter, baseband_rrc, phase_corrector)
+        // top:connect(phase_corrector, clock_demod, clock_recoverer)
+        // top:connect(phase_corrector, 'out', sampler, 'data')
+        // top:connect(clock_recoverer, 'out', sampler, 'clock')
+        // top:connect(sampler, bit_demod, bit_slicer, bit_decoder, bit_diff_decoder, framer, decoder, sink)
+    }
+
+    pub fn setFrequency(self: *RDS, freq: f32) !void {
+        self.frequency = freq;
+    }
+};
 
 // Radio band definitions
 pub const Band =
@@ -230,3 +277,42 @@ pub const Band =
 test {
     tst.refAllDecls(@This());
 }
+
+/// https://github.com/vsergeev/luaradio/blob/master/radio/blocks/protocol/rdsdecoder.lua
+pub const RDSDecoderBlock = struct {
+    block: radio.Block,
+};
+
+/// https://github.com/vsergeev/luaradio/blob/master/radio/blocks/protocol/rdsframer.lua
+pub const RDSFramerBlock = struct {
+    block: radio.Block,
+    synchronized: bool = false,
+    rds_frame: [FrameLen]u1,
+    rds_frame_len: usize = 0,
+
+    const FrameLen = 104;
+    const BlockLen = 26;
+    const OffsetWord = enum(u12) {
+        A = 0x0fc,
+        B = 0x198,
+        C = 0x168,
+        Cp = 0x350,
+        D = 0x1b4,
+    };
+
+    pub fn process(self: *RDSFramerBlock, x: []const f32, y: []f32) !radio.ProcessResult {
+        _ = self; // autofix
+        _ = x; // autofix
+        _ = y; // autofix
+
+        return error.Unimplemented;
+    }
+    /// Block bits layout:
+    ///  MMMM MMMM MMMM MMMM CC CCCC CCCC
+    /// 26-bits block = 16-bits message + 10-bits error correcting code
+    fn correct_block(self: *RDSFramerBlock, block_bits: []const u1, offset: OffsetWord) !void {
+        _ = block_bits; // autofix
+        _ = self; // autofix
+        _ = offset; // autofix
+    }
+};
