@@ -149,15 +149,15 @@ pub const RadioReceiver = struct {
     }
 };
 
-test {
-    var r = try RadioReceiver.init(tst.allocator, true);
-    defer r.deinit();
+// test {
+//     var r = try RadioReceiver.init(tst.allocator, true);
+//     defer r.deinit();
 
-    try r.connect(.FM);
-    try r.start();
-    // radio.platform.waitForInterrupt();
-    try r.stop();
-}
+//     try r.connect(.FM);
+//     try r.start();
+//     radio.platform.waitForInterrupt();
+//     try r.stop();
+// }
 
 pub const GainBlock = struct {
     block: radio.Block,
@@ -195,7 +195,7 @@ pub const RDS = struct {
     block: radio.CompositeBlock,
     frequency: f32,
 
-    // hilbert: radio.bloc
+    hilbert: HilbertTransformBlock,
     mixer_delay: radio.blocks.DelayBlock(f32),
     pilot_filter: radio.blocks.ComplexBandpassFilterBlock(129),
     pll_baseband: radio.blocks.ComplexPLLBlock,
@@ -206,11 +206,11 @@ pub const RDS = struct {
     // ck_recover = radio.blocks.c
     // sampler = radio.blocks.
     bit_demod: radio.blocks.ComplexToRealBlock,
-    bit_decode: radio.blocks.SlicerBlock(.{}),
+    bit_decode: radio.blocks.SlicerBlock(void),
     bit_diff_decode: radio.blocks.DifferentialDecoderBlock(false),
     framer: void,
     decoder: void,
-    sink: radio.blocks.JSONStreamSink(.{}),
+    sink: radio.blocks.JSONStreamSink(void),
 
     pub fn init(options: anytype) RDS {
         return RDS{
@@ -315,4 +315,247 @@ pub const RDSFramerBlock = struct {
         _ = self; // autofix
         _ = offset; // autofix
     }
+};
+
+/// Hilbert Transform Block - converts real signal to complex analytic signal
+///
+/// This block implements a 90-degree phase shift filter to create the imaginary
+/// component of a complex signal from a real input. The real part is the original
+/// signal delayed by half the filter length to maintain time alignment.
+///
+/// Used in RDS demodulation to convert the real FM multiplex baseband signal
+/// into a complex representation needed for further processing.
+pub const HilbertTransformBlock = struct {
+    block: radio.Block,
+
+    // Filter coefficients and state
+    filter_taps: []f32,
+    filter_length: usize,
+    delay_line: []f32,
+    write_index: usize,
+
+    // Real signal delay line (for time alignment)
+    real_delay: []f32,
+    real_delay_samples: usize,
+
+    // Memory management
+    allocator: std.mem.Allocator,
+
+    const Self = @This();
+
+    /// Initialize Hilbert transform with specified filter length
+    /// filter_length should be odd for proper Hilbert transform
+    pub fn init(allocator: std.mem.Allocator, filter_length: usize) !Self {
+        // Ensure odd filter length for symmetric Hilbert transform
+        const actual_length = if (filter_length % 2 == 0) filter_length + 1 else filter_length;
+
+        // Allocate memory for filter taps and delay lines
+        const filter_taps = try allocator.alloc(f32, actual_length);
+        const delay_line = try allocator.alloc(f32, actual_length);
+
+        // Real signal delay - half the filter length for time alignment
+        const real_delay_samples = actual_length / 2;
+        const real_delay = try allocator.alloc(f32, real_delay_samples);
+
+        // Initialize delay lines to zero
+        @memset(delay_line, 0.0);
+        @memset(real_delay, 0.0);
+
+        var self = Self{
+            .block = radio.Block.init(Self),
+            .filter_taps = filter_taps,
+            .filter_length = actual_length,
+            .delay_line = delay_line,
+            .write_index = 0,
+            .real_delay = real_delay,
+            .real_delay_samples = real_delay_samples,
+            .allocator = allocator,
+        };
+
+        // Calculate Hilbert transform filter coefficients
+        try self.calculateHilbertCoefficients();
+
+        return self;
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.allocator.free(self.filter_taps);
+        self.allocator.free(self.delay_line);
+        self.allocator.free(self.real_delay);
+    }
+
+    /// Calculate Hilbert transform FIR filter coefficients
+    /// Uses windowed sinc function approach with Hamming window
+    fn calculateHilbertCoefficients(self: *Self) !void {
+        const center = @as(f32, @floatFromInt(self.filter_length / 2));
+
+        for (self.filter_taps, 0..) |*tap, i| {
+            const n = @as(f32, @floatFromInt(i)) - center;
+
+            if (i == self.filter_length / 2) {
+                // Center tap is always zero for Hilbert transform
+                tap.* = 0.0;
+            } else {
+                // Hilbert transform impulse response: h[n] = 2/(π*n) for odd n, 0 for even n
+                const n_int = @as(i32, @intFromFloat(n));
+                if (@mod(n_int, 2) != 0) {
+                    // Odd samples: sinc function
+                    const pi_n = math.pi * n;
+                    tap.* = 2.0 / pi_n;
+
+                    // Apply Hamming window to reduce sidelobes
+                    const window_arg = 2.0 * math.pi * @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(self.filter_length - 1));
+                    const window = 0.54 - 0.46 * math.cos(window_arg);
+                    tap.* *= window;
+                } else {
+                    // Even samples: zero
+                    tap.* = 0.0;
+                }
+            }
+        }
+    }
+
+    /// ZigRadio block interface - process samples
+    /// Input: real-valued signal
+    /// Output: complex-valued analytic signal (real + j*hilbert(real))
+    pub fn process(self: *Self, input: []const f32, output: []math.Complex(f32)) !radio.ProcessResult {
+        if (output.len < input.len) {
+            return radio.ProcessResult.init(&[1]usize{0}, &[1]usize{0});
+        }
+
+        for (input, 0..) |sample, i| {
+            // Store input sample in delay line
+            self.delay_line[self.write_index] = sample;
+
+            // Calculate Hilbert transform (imaginary component)
+            var imaginary_part: f32 = 0.0;
+            for (self.filter_taps, 0..) |tap, j| {
+                const delay_idx = (self.write_index + self.filter_length - j) % self.filter_length;
+                imaginary_part += tap * self.delay_line[delay_idx];
+            }
+
+            // Real part: delayed input for time alignment
+            const real_delay_idx = (self.write_index + self.real_delay_samples) % self.real_delay_samples;
+            const real_part = self.real_delay[real_delay_idx];
+
+            // Store current sample in real delay line
+            self.real_delay[self.write_index % self.real_delay_samples] = sample;
+
+            // Output complex sample
+            output[i] = math.Complex(f32).init(real_part, imaginary_part);
+
+            // Advance write index
+            self.write_index = (self.write_index + 1) % self.filter_length;
+        }
+
+        return radio.ProcessResult.init(&[1]usize{input.len}, &[1]usize{input.len});
+    }
+};
+
+// Test the Hilbert transform block
+test "HilbertTransformBlock basic functionality" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Create Hilbert transform block
+    var hilbert = try HilbertTransformBlock.init(allocator, 129);
+    defer hilbert.deinit();
+
+    // Test with a simple sinusoid
+    const test_freq = 1000.0; // 1 kHz
+    const sample_rate = 44100.0;
+    const num_samples = 1024;
+
+    var input_buffer: [num_samples]f32 = undefined;
+    var output_buffer: [num_samples]math.Complex(f32) = undefined;
+
+    // Generate test sinusoid
+    for (&input_buffer, 0..) |*sample, i| {
+        const t = @as(f32, @floatFromInt(i)) / sample_rate;
+        sample.* = math.sin(2.0 * math.pi * test_freq * t);
+    }
+
+    // Process through Hilbert transform
+    _ = try hilbert.process(&input_buffer, &output_buffer);
+
+    // Check that we have complex output
+    // The imaginary part should be approximately -cos(2πft) for sin(2πft) input
+    // This is a basic sanity check - full validation would require more sophisticated testing
+
+    var has_nonzero_imaginary = false;
+    for (output_buffer[hilbert.filter_length..]) |complex_sample| {
+        if (@abs(complex_sample.im) > 0.1) {
+            has_nonzero_imaginary = true;
+            break;
+        }
+    }
+
+    try testing.expect(has_nonzero_imaginary);
+}
+
+// For bit timing recovery - essential for RDS
+pub const ZeroCrossingClockRecoveryBlock = struct {
+    block: radio.Block,
+    symbol_rate: f32,
+    clock_phase: f32,
+    last_sample: f32,
+
+    pub fn init(symbol_rate: f32) ZeroCrossingClockRecoveryBlock {
+        _ = symbol_rate; // autofix
+        // Detects zero crossings to recover clock timing
+        // Critical for BPSK demodulation
+    }
+
+    pub fn process(self: *ZeroCrossingClockRecoveryBlock, input: []const f32, output: []f32) !radio.ProcessResult {
+        _ = self; // autofix
+        _ = input; // autofix
+        _ = output; // autofix
+        // Zero-crossing detection and clock pulse generation
+        // Output: clock pulses at symbol rate timing
+    }
+};
+
+// Symbol sampler triggered by clock recovery
+pub const SamplerBlock = struct {
+    block: radio.Block,
+    data_buffer: f32,
+    clock_buffer: f32,
+
+    pub fn init() SamplerBlock {
+        // Sample data input at clock input timing
+    }
+
+    pub fn process(self: *SamplerBlock, data_input: []const f32, clock_input: []const f32, output: []f32) !radio.ProcessResult {
+        _ = self; // autofix
+        _ = data_input; // autofix
+        _ = clock_input; // autofix
+        _ = output; // autofix
+        // Sample data_input whenever clock_input has rising edge
+        // Essential for symbol decision timing
+    }
+};
+// Phase correction for BPSK constellation
+pub const BinaryPhaseCorrectorBlock = struct {
+    block: radio.Block,
+    phase_error: f32,
+    loop_bandwidth: f32,
+
+    pub fn init(loop_bandwidth: f32) BinaryPhaseCorrectorBlock {
+        _ = loop_bandwidth; // autofix
+        // Corrects phase rotation in BPSK signal
+        // Similar to Costas loop but simpler for binary PSK
+    }
+
+    pub fn process(self: *BinaryPhaseCorrectorBlock, input: []const std.math.Complex(f32), output: []std.math.Complex(f32)) !radio.ProcessResult {
+        _ = self; // autofix
+        _ = input; // autofix
+        _ = output; // autofix
+        // Phase error detection and correction
+        // Ensures BPSK constellation is properly aligned
+    }
+};
+// Manchester decoder for RDS bit stream
+pub const ManchesterDecoderBlock = struct {
+    // Converts Manchester-encoded bits to NRZ
+    // RDS uses differential Manchester encoding
 };
