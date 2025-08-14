@@ -10,17 +10,12 @@ pub const RDS = struct {
     block: radio.CompositeBlock,
     frequency: f32,
 
-    fm_demod: radio.blocks.FrequencyDiscriminatorBlock,
-    hilbert: HilbertTransformBlock,
-    mixer_delay: radio.blocks.DelayBlock(f32),
-    pilot_filter: radio.blocks.ComplexBandpassFilterBlock(129),
-    pll_baseband: radio.blocks.ComplexPLLBlock,
-    mixer: radio.blocks.MultiplyConjugateBlock,
+    signal: RDSSignalBlock,
     bb_filter: radio.blocks.LowpassFilterBlock(math.Complex(f32), 128),
-    bb_rrc: radio.blocks.RectangularMatchedFilterBlock,
+    bb_rrc: radio.blocks.LowpassFilterBlock(math.Complex(f32), 101),
     ck_demod: radio.blocks.ComplexToRealBlock,
     ck_recover: ZeroCrossingClockRecoveryBlock,
-    sampler: SamplerBlock,
+    sampler: SamplerBlock(math.Complex(f32)),
     bp_corrector: BinaryPhaseCorrectorBlock,
     bit_demod: radio.blocks.ComplexToRealBlock,
     bit_slicer: radio.blocks.SlicerBlock(radio.blocks.BinarySlicer),
@@ -34,14 +29,9 @@ pub const RDS = struct {
             .frequency = options.frequency,
             .block = .init(RDS, &.{"in1"}, &.{"out1"}),
 
-            .fm_demod = .init(1.25),
-            .hilbert = try .init(alloc, 129),
-            .mixer_delay = .init(129),
-            .pilot_filter = .init(.{ 18e3, 20e3 }, .{}),
-            .pll_baseband = .init(1500, .{ 19e3 - 100, 19e3 + 100 }, .{ .multiplier = 3.0 }),
-            .mixer = .init(),
+            .signal = try .init(alloc),
             .bb_filter = .init(128, .{ .nyquist = 4e3 }),
-            .bb_rrc = .init(200), //todo REDO
+            .bb_rrc = .init(101, .{}),
             .ck_demod = .init(),
             .ck_recover = .init(1187.5 * 2, 44_000),
             .sampler = try .init(alloc),
@@ -56,19 +46,13 @@ pub const RDS = struct {
     }
 
     pub fn deinit(self: *RDS) void {
-        self.hilbert.deinit();
+        self.signal.deinit();
         self.sampler.deinit();
         // Other blocks that need deinitialization can be added here
     }
 
     pub fn connect(self: *RDS, fg: *radio.Flowgraph) !void {
-        try fg.connect(&self.fm_demod.block, &self.hilbert.block);
-        try fg.connect(&self.hilbert.block, &self.mixer_delay.block);
-        try fg.connect(&self.hilbert.block, &self.pilot_filter.block);
-        try fg.connect(&self.pilot_filter.block, &self.pll_baseband.block);
-        try fg.connectPort(&self.mixer_delay.block, "out1", &self.mixer.block, "in1");
-        try fg.connectPort(&self.pll_baseband.block, "out1", &self.mixer.block, "in2");
-        try fg.connect(&self.mixer.block, &self.bb_filter.block);
+        try fg.connect(&self.signal.block, &self.bb_filter.block);
         try fg.connect(&self.bb_filter.block, &self.bb_rrc.block);
         try fg.connect(&self.bb_rrc.block, &self.bp_corrector.block);
         try fg.connect(&self.bp_corrector.block, &self.ck_demod.block);
@@ -82,12 +66,118 @@ pub const RDS = struct {
         try fg.connect(&self.bit_diff_decode.block, &self.framer.block);
         try fg.connect(&self.framer.block, &self.decoder.block);
 
-        try fg.alias(&self.block, "in1", &self.fm_demod.block, "in1");
+        try fg.alias(&self.block, "in1", &self.signal.block, "in1");
         try fg.alias(&self.block, "out1", &self.decoder.block, "out1");
     }
 
     pub fn setFrequency(self: *RDS, freq: f32) !void {
         self.frequency = freq;
+    }
+};
+
+pub fn RootRaisedCosineFilter(
+    comptime T: type,
+    taps: usize,
+    comptime options: anytype,
+) type {
+    std.debug.assert(@typeInfo(T) == .float);
+    return struct {
+        block: radio.Block,
+        taps: [taps]T = computeRCCTaps(options.rolloff),
+        delay_line: [taps]math.Complex(T) = [_]math.Complex(T){.init(0, 0)} ** taps,
+        index: usize = 0,
+
+        fn computeRCCTaps(rolloff: T) [taps]T {
+            var t: [taps]T = undefined;
+            const center = @divFloor(taps, 2);
+            @setEvalBranchQuota(100_000);
+            for (0..taps) |i| {
+                const n = @as(T, @floatFromInt(i)) - @as(T, @floatFromInt(center));
+                if (n == 0) {
+                    t[i] = 1.0 - rolloff + 4.0 * rolloff / math.pi;
+                } else {
+                    const pin = math.pi * n;
+                    const num = @sin(pin * (1.0 - rolloff) + 4.0 * rolloff * n * @cos(pin * (1 + rolloff)));
+                    const denom = pin * (1.0 - (4.0 * rolloff * n) * (4.0 * rolloff * n));
+                    t[i] = num / denom;
+                }
+            }
+            return t;
+        }
+        const Self = @This();
+
+        pub fn init() Self {
+            return .{
+                .block = radio.Block.init(Self),
+            };
+        }
+        pub fn process(
+            self: *Self,
+            input: []const math.Complex(T),
+            output: []math.Complex(T),
+        ) !radio.ProcessResult {
+            //add sample to delay line
+            self.delay_line[self.index] = input[0];
+            self.index = @mod(self.index + 1, self.delay_line.len);
+
+            // convolve
+            var out: math.Complex(T) = .init(0, 0);
+
+            for (0..self.taps.len) |i| {
+                const delay_idx = @mod(self.index + self.delay_line.len - i, self.delay_line.len);
+                const sample = self.delay_line[delay_idx];
+                const tap: math.Complex(T) = .init(self.taps[i], 0);
+                out = out.add(sample.mul(tap));
+            }
+            output[0] = out;
+            // std.debug.print("{}\n", .{output});
+
+            return radio.ProcessResult.init(&[1]usize{1}, &[1]usize{1});
+        }
+    };
+}
+
+test "RRC" {
+    var mf = RootRaisedCosineFilter(f32, 100, .{ .rolloff = 0.2 }).init();
+    mf.index += 1;
+}
+
+pub const RDSSignalBlock = struct {
+    block: radio.CompositeBlock,
+
+    fm_demod: radio.blocks.FrequencyDiscriminatorBlock,
+    hilbert: HilbertTransformBlock,
+    mixer_delay: radio.blocks.DelayBlock(math.Complex(f32)),
+    pilot_filter: radio.blocks.ComplexBandpassFilterBlock(129),
+    pll_baseband: radio.blocks.ComplexPLLBlock,
+    mixer: radio.blocks.MultiplyConjugateBlock,
+
+    pub fn init(alloc: Allocator) !RDSSignalBlock {
+        return .{
+            .block = radio.CompositeBlock.init(RDSSignalBlock, &.{"in1"}, &.{"out1"}),
+
+            .fm_demod = .init(1.25),
+            .hilbert = try .init(alloc, 129),
+            .mixer_delay = .init(129),
+            .pilot_filter = .init(.{ 18e3, 20e3 }, .{}),
+            .pll_baseband = .init(1500, .{ 19e3 - 100, 19e3 + 100 }, .{ .multiplier = 3.0 }),
+            .mixer = .init(),
+        };
+    }
+    pub fn deinit(self: *RDSSignalBlock) void {
+        self.hilbert.deinit();
+    }
+
+    pub fn connect(self: *RDSSignalBlock, fg: *radio.Flowgraph) !void {
+        try fg.connect(&self.fm_demod.block, &self.hilbert.block);
+        try fg.connect(&self.hilbert.block, &self.mixer_delay.block);
+        try fg.connect(&self.hilbert.block, &self.pilot_filter.block);
+        try fg.connect(&self.pilot_filter.block, &self.pll_baseband.block);
+        try fg.connectPort(&self.mixer_delay.block, "out1", &self.mixer.block, "in1");
+        try fg.connectPort(&self.pll_baseband.block, "out1", &self.mixer.block, "in2");
+
+        try fg.alias(&self.block, "in1", &self.fm_demod.block, "in1");
+        try fg.alias(&self.block, "out1", &self.mixer.block, "out1");
     }
 };
 
@@ -708,9 +798,9 @@ pub const HilbertTransformBlock = struct {
     /// Input: real-valued signal
     /// Output: complex-valued analytic signal (real + j*hilbert(real))
     pub fn process(self: *Self, input: []const f32, output: []math.Complex(f32)) !radio.ProcessResult {
-        if (output.len < input.len) {
-            return radio.ProcessResult.init(&[1]usize{0}, &[1]usize{0});
-        }
+        // if (output.len < input.len) {
+        //     return radio.ProcessResult.init(&[1]usize{0}, &[1]usize{0});
+        // }
 
         for (input, 0..) |sample, i| {
             // Store input sample in delay line
@@ -860,50 +950,52 @@ pub const ZeroCrossingClockRecoveryBlock = struct {
 };
 
 // Symbol sampler triggered by clock recovery
-pub const SamplerBlock = struct {
-    block: radio.Block,
-    last_clock: f32,
-    data_buffer: std.ArrayList(f32),
-    allocator: std.mem.Allocator,
+pub fn SamplerBlock(comptime T: type) type {
+    return struct {
+        block: radio.Block,
+        last_clock: f32,
+        data_buffer: std.ArrayList(T),
+        allocator: std.mem.Allocator,
 
-    const Self = @This();
+        const Self = @This();
 
-    pub fn init(allocator: std.mem.Allocator) !SamplerBlock {
-        return .{
-            .block = radio.Block.init(Self),
-            .last_clock = 0,
-            .data_buffer = std.ArrayList(f32).init(allocator),
-            .allocator = allocator,
-        };
-    }
-
-    pub fn deinit(self: *Self) void {
-        self.data_buffer.deinit();
-    }
-
-    pub fn process(self: *Self, data_input: []const f32, clock_input: []const f32, output: []f32) !radio.ProcessResult {
-        if (data_input.len != clock_input.len) {
-            return radio.ProcessResult.init(&[2]usize{ 0, 0 }, &[1]usize{0});
+        pub fn init(allocator: std.mem.Allocator) !Self {
+            return .{
+                .block = radio.Block.init(Self),
+                .last_clock = 0,
+                .data_buffer = std.ArrayList(T).init(allocator),
+                .allocator = allocator,
+            };
         }
 
-        var out_idx: usize = 0;
+        pub fn deinit(self: *Self) void {
+            self.data_buffer.deinit();
+        }
 
-        for (data_input, clock_input) |data_sample, clock_sample| {
-            // Detect rising edge on clock
-            const rising_edge = self.last_clock <= 0.5 and clock_sample > 0.5;
-
-            if (rising_edge and out_idx < output.len) {
-                // Sample the data on rising edge
-                output[out_idx] = data_sample;
-                out_idx += 1;
+        pub fn process(self: *Self, data_input: []const T, clock_input: []const f32, output: []T) !radio.ProcessResult {
+            if (data_input.len != clock_input.len) {
+                return radio.ProcessResult.init(&[2]usize{ 0, 0 }, &[1]usize{0});
             }
 
-            self.last_clock = clock_sample;
-        }
+            var out_idx: usize = 0;
 
-        return radio.ProcessResult.init(&[2]usize{ data_input.len, clock_input.len }, &[1]usize{out_idx});
-    }
-};
+            for (data_input, 0..) |data_sample, i| {
+                // Detect rising edge on clock
+                const rising_edge = self.last_clock <= 0.5 and clock_input[i] > 0.5;
+
+                if (rising_edge and out_idx < output.len) {
+                    // Sample the data on rising edge
+                    output[out_idx] = data_sample;
+                    out_idx += 1;
+                }
+
+                self.last_clock = clock_input[i];
+            }
+
+            return radio.ProcessResult.init(&[2]usize{ data_input.len, clock_input.len }, &[1]usize{out_idx});
+        }
+    };
+}
 
 // Phase correction for BPSK constellation
 pub const BinaryPhaseCorrectorBlock = struct {
@@ -1022,21 +1114,23 @@ test "RDS" {
     var fg = radio.Flowgraph.init(tst.allocator, .{ .debug = true });
     defer fg.deinit();
 
-    var iq_file = try std.fs.cwd().openFile("test/rds/SDRuno_20200907_184033Z_88110kHz.wav", .{ .mode = .read_only });
+    var iq_file = try std.fs.cwd().openFile("test/rds/SDRSharp_20150804_204012Z_0Hz_IQ.wav", .{ .mode = .read_only });
     defer iq_file.close();
 
     const reader = iq_file.reader();
 
-    var iq = radio.blocks.IQStreamSource.init(reader.any(), .f32be, 44_000, .{});
+    var iq = radio.blocks.IQStreamSource.init(reader.any(), .s16le, 192_000, .{});
     var tuner = radio.blocks.TunerBlock.init(0, 1_200_000, 2);
-    var rds = try RDS.init(tst.allocator, .{ .frequency = 88.1e6 });
+    var rds = try RDS.init(tst.allocator, .{ .frequency = 8.1e6 });
+    // var rds = try RDSSignalBlock.init(tst.allocator);
     defer rds.deinit();
 
-    var sink = radio.blocks.JSONStreamSink(RDSDecoderBlock.RDSData).init(std.io.getStdErr().writer().any(), .{});
+    // var sink = radio.blocks.JSONStreamSink(RDSDecoderBlock.RDSData).init(std.io.getStdErr().writer().any(), .{});
+    // var sink = radio.blocks.PrintSink(math.Complex(f32)).init();
     // Connect the IQ source to the RDS decoder
     try fg.connect(&iq.block, &tuner.block);
     try fg.connect(&tuner.block, &rds.block);
-    try fg.connect(&rds.block, &sink.block);
+    // try fg.connect(&rds.block, &sink.block);
 
     try fg.start();
 
