@@ -5,6 +5,12 @@ const tst = std.testing;
 const math = std.math;
 const radio = @import("radio");
 
+pub const SignalSlicer = struct {
+    pub inline fn process(value: f32) f32 {
+        return if (value > 0) 1 else 0;
+    }
+};
+
 /// https://luaradio.io/examples/rtlsdr-rds.html
 pub const RDS = struct {
     block: radio.CompositeBlock,
@@ -38,7 +44,7 @@ pub const RDS = struct {
             .bp_corrector = .init(8e3),
             .bit_demod = .init(),
             .bit_slicer = .init(),
-            .bit_decoder = .init(alloc),
+            .bit_decoder = .init(),
             .bit_diff_decode = .init(),
             .framer = .init(alloc),
             .decoder = .init(alloc),
@@ -564,7 +570,7 @@ pub const RDSFramerBlock = struct {
             .allocator = allocator,
         };
     }
-    pub fn process(self: *RDSFramerBlock, x: []const f32, y: []u8) !radio.ProcessResult {
+    pub fn process(self: *RDSFramerBlock, x: []const u1, y: []u8) !radio.ProcessResult {
         var frames_out: usize = 0;
 
         for (x) |sample| {
@@ -1063,50 +1069,47 @@ pub const BinaryPhaseCorrectorBlock = struct {
 // Manchester decoder for RDS bit stream
 pub const DifferentialManchesterDecoderBlock = struct {
     block: radio.Block,
-    last_phase: u1,
-    allocator: std.mem.Allocator,
+    last_bit: u1,
+    invert: bool = false,
 
     const Self = @This();
 
-    pub fn init(allocator: std.mem.Allocator) DifferentialManchesterDecoderBlock {
+    pub fn init() DifferentialManchesterDecoderBlock {
         return .{
             .block = radio.Block.init(Self),
-            .last_phase = 0,
-            .allocator = allocator,
+            .last_bit = 0,
         };
     }
 
-    pub fn process(self: *Self, input: []const f32, output: []f32) !radio.ProcessResult {
+    pub fn process(self: *Self, input: []const u1, output: []u1) !radio.ProcessResult {
         if (output.len < input.len / 2) {
             return radio.ProcessResult.init(&[1]usize{0}, &[1]usize{0});
         }
 
         var out_idx: usize = 0;
-        var i: usize = 0;
-
-        // Differential Manchester:
-        // Transition at start of bit period = '0'
-        // No transition at start of bit period = '1'
-
-        while (i + 1 < input.len and out_idx < output.len) {
-            const bit1 = if (input[i] > 0) @as(u1, 1) else @as(u1, 0);
-            const bit2 = if (input[i + 1] > 0) @as(u1, 1) else @as(u1, 0);
-
-            // Check for transition at bit boundary
-            const transition = (bit1 != self.last_phase);
-
-            if (transition) {
-                output[out_idx] = 0.0; // '0' - transition present
-            } else {
-                output[out_idx] = 1.0; // '1' - no transition
+        var prev_bit = self.last_bit;
+        for (0..input.len - 1) |i| {
+            const cur_bit = input[i];
+            if (cur_bit == 0)
+                prev_bit = cur_bit
+            else {
+                if (prev_bit == 0 and cur_bit == 1) {
+                    output[out_idx] = @as(u1, @intFromBool(self.invert)) & 1 | 0;
+                    out_idx += 1;
+                    prev_bit = 0;
+                } else if (prev_bit == 1 and cur_bit == 0) {
+                    output[out_idx] = @as(u1, @intFromBool(self.invert)) & 0 | 1;
+                    out_idx += 1;
+                    prev_bit = 0;
+                } else {
+                    // clock skip
+                    prev_bit = cur_bit;
+                }
             }
-
-            out_idx += 1;
-            self.last_phase = bit2;
-            i += 2;
         }
+        self.last_bit = prev_bit;
 
-        return radio.ProcessResult.init(&[1]usize{i}, &[1]usize{out_idx});
+        return radio.ProcessResult.init(&[1]usize{input.len}, &[1]usize{out_idx});
     }
 };
 
@@ -1125,17 +1128,17 @@ test "RDS" {
     // var rds = try RDSSignalBlock.init(tst.allocator);
     defer rds.deinit();
 
-    // var sink = radio.blocks.JSONStreamSink(RDSDecoderBlock.RDSData).init(std.io.getStdErr().writer().any(), .{});
-    // var sink = radio.blocks.PrintSink(math.Complex(f32)).init();
+    var sink = radio.blocks.JSONStreamSink(RDSDecoderBlock.RDSData).init(std.io.getStdErr().writer().any(), .{});
+    // var sink = radio.blocks.PrintSink(RDSDecoderBlock.RDSData).init();
     // Connect the IQ source to the RDS decoder
     try fg.connect(&iq.block, &tuner.block);
     try fg.connect(&tuner.block, &rds.block);
-    // try fg.connect(&rds.block, &sink.block);
+    try fg.connect(&rds.block, &sink.block);
 
     try fg.start();
 
     // Run for a short time to test
-    std.time.sleep(100 * std.time.ns_per_ms);
+    // std.time.sleep(100 * std.time.ns_per_ms);
 
     _ = try fg.stop();
 }
