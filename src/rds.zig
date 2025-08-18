@@ -1138,7 +1138,7 @@ test "RDS" {
     try fg.start();
 
     // Run for a short time to test
-    // std.time.sleep(100 * std.time.ns_per_ms);
+    std.time.sleep(100 * std.time.ns_per_ms);
 
     _ = try fg.stop();
 }
