@@ -117,11 +117,11 @@ const RadioTuner = struct {
             },
             .presets = [_]RadioPreset{
                 .{ .frequency = 91.9, .name = "Jeff 92", .band = .FM_Stereo },
-                .{ .frequency = 920.0, .name = "WBAA News", .band = .AM },
+                .{ .frequency = 105.9, .name = "WBAA News", .band = .FM_Stereo },
                 .{ .frequency = 101.3, .name = "WBAA Jazz", .band = .FM_Stereo },
                 .{ .frequency = 98.7, .name = "WASK Classic Hits", .band = .FM_Stereo },
-                .{ .frequency = 93.5, .name = "KHY Rock", .band = .FM_Stereo },
-                .{ .frequency = 1450.0, .name = "WASK", .band = .AM },
+                .{ .frequency = 93.5, .name = "WKHY Rock", .band = .FM_Stereo },
+                .{ .frequency = 95.3, .name = "WBPE Rock", .band = .FM_Stereo },
             },
             .preset_buttons = undefined, // Will be initialized properly
             .status_text = "Ready",
