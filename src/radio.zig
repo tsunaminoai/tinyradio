@@ -11,6 +11,7 @@ pub const RadioReceiver = struct {
     flowgraph: radio.Flowgraph,
     source: radio.blocks.RtlSdrSource,
     sink: radio.blocks.PulseAudioSink(2),
+    data_sink: radio.blocks.PrintSink(rds.RDSDecoderBlock.RDSData),
 
     // base nodes
     tuner: radio.blocks.TunerBlock,
@@ -24,6 +25,7 @@ pub const RadioReceiver = struct {
     fm_stereo: radio.blocks.WBFMStereoDemodulatorBlock,
     am: radio.blocks.AMEnvelopeDemodulatorBlock,
     debug: bool = false,
+    rds: rds.RDS,
 
     const tune_offset = -0e3;
 
@@ -33,7 +35,9 @@ pub const RadioReceiver = struct {
             .debug = debug,
             .flowgraph = radio.Flowgraph.init(allocator, .{ .debug = debug }),
             .source = undefined,
+            .rds = undefined,
             .sink = radio.blocks.PulseAudioSink(2).init(),
+            .data_sink = .init(),
             .tuner = radio.blocks.TunerBlock.init(tune_offset, 200e3, 4),
             .af_gain_left = GainBlock.init(0.3),
             .af_gain_right = GainBlock.init(0.3),
@@ -52,6 +56,7 @@ pub const RadioReceiver = struct {
 
     pub fn deinit(self: *RadioReceiver) void {
         self.flowgraph.deinit();
+        self.rds.deinit();
         // if (self.source) |source| source.deinit();
         // if (self.sink) |sink| sink.deinit();
         // if (self.fm_demod) |demod| demod.deinit();
@@ -77,6 +82,9 @@ pub const RadioReceiver = struct {
                 },
             ),
         };
+        self.rds = try .init(self.allocator, .{
+            .frequency = @as(f32, @floatCast(self.source.frequency)),
+        });
     }
 
     pub fn connect(self: *RadioReceiver, band: Band) !void {
@@ -111,10 +119,12 @@ pub const RadioReceiver = struct {
             },
             .FM_Stereo => {
                 try self.flowgraph.connectPort(&self.tuner.block, "out1", &self.fm_stereo.block, "in1");
+                try self.flowgraph.connectPort(&self.tuner.block, "out1", &self.rds.block, "in1");
                 try self.flowgraph.connectPort(&self.fm_stereo.block, "out1", &self.af_gain_left.block, "in1");
                 try self.flowgraph.connectPort(&self.fm_stereo.block, "out2", &self.af_gain_right.block, "in1");
                 try self.flowgraph.connectPort(&self.af_gain_left.block, "out1", &self.sink.block, "in1");
                 try self.flowgraph.connectPort(&self.af_gain_right.block, "out1", &self.sink.block, "in2");
+                try self.flowgraph.connectPort(&self.rds.block, "out1", &self.data_sink.block, "in1");
             },
         }
         if (wasRunning)
