@@ -56,6 +56,7 @@ const RadioTuner = struct {
     volume_up_button: vxfw.Button,
     volume_down_button: vxfw.Button,
     mute_button: vxfw.Button,
+    effects_button: vxfw.Button,
 
     // Presets
     presets: [6]RadioPreset,
@@ -82,9 +83,9 @@ const RadioTuner = struct {
             .receiver = r,
             .current_band = .FM_Stereo,
             .frequency = RadioBand.FM_Stereo.getDefaultFreq(),
-            .volume = 50,
+            .volume = 25,
             .is_muted = false,
-            .signal_strength = 75, // Simulated signal strength
+            .signal_strength = 75, //FIXME Simulated signal strength
             .freq_up_button = .{
                 .label = "Freq +",
                 .onClick = freqUpCallback,
@@ -115,13 +116,18 @@ const RadioTuner = struct {
                 .onClick = volumeDownCallback,
                 .userdata = null,
             },
+            .effects_button = .{
+                .label = "Effect",
+                .onClick = EffectButtonCallback,
+                .userdata = null,
+            },
             .presets = [_]RadioPreset{
                 .{ .frequency = 91.9, .name = "Jeff 92", .band = .FM_Stereo },
-                .{ .frequency = 920.0, .name = "WBAA News", .band = .AM },
-                .{ .frequency = 101.3, .name = "WBAA Jazz", .band = .FM_Stereo },
+                .{ .frequency = 105.3, .name = "WBAA Talk", .band = .FM_Stereo },
+                .{ .frequency = 101.3, .name = "WBAA Classical", .band = .FM_Stereo },
                 .{ .frequency = 98.7, .name = "WASK Classic Hits", .band = .FM_Stereo },
                 .{ .frequency = 93.5, .name = "KHY Rock", .band = .FM_Stereo },
-                .{ .frequency = 1450.0, .name = "WASK", .band = .AM },
+                .{ .frequency = 102.9, .name = "WXXB Talk", .band = .FM_Stereo },
             },
             .preset_buttons = undefined, // Will be initialized properly
             .status_text = "Ready",
@@ -193,6 +199,9 @@ const RadioTuner = struct {
                 } else if (key.matches('m', .{})) {
                     self.toggleMute();
                     return ctx.consumeAndRedraw();
+                } else if (key.matches('e', .{})) {
+                    self.receiver.toggleEffects();
+                    return ctx.consumeAndRedraw();
                 } else if (key.matches('+', .{}) or key.matches(vaxis.Key.right, .{})) {
                     self.adjustVolume(true);
                     return ctx.consumeAndRedraw();
@@ -228,6 +237,7 @@ const RadioTuner = struct {
         self.volume_up_button.userdata = self;
         self.volume_down_button.userdata = self;
         self.mute_button.userdata = self;
+        self.effects_button.userdata = self;
         self.signal_strength = self.receiver.getPower();
 
         for (0..6) |i| {
@@ -359,6 +369,15 @@ const RadioTuner = struct {
         try children.append(.{
             .origin = .{ .row = 7, .col = col_offset },
             .surface = try self.volume_up_button.draw(ctx.withConstraints(
+                ctx.min,
+                .{ .width = button_width, .height = button_height },
+            )),
+        });
+        col_offset += button_spacing;
+
+        try children.append(.{
+            .origin = .{ .row = 7, .col = col_offset },
+            .surface = try self.effects_button.draw(ctx.withConstraints(
                 ctx.min,
                 .{ .width = button_width, .height = button_height },
             )),
@@ -546,6 +565,13 @@ const RadioTuner = struct {
             return ctx.consumeAndRedraw();
         }
     }
+    fn EffectButtonCallback(maybe_ptr: ?*anyopaque, ctx: *vxfw.EventContext) anyerror!void {
+        if (maybe_ptr) |ptr| {
+            const self: *Self = @ptrCast(@alignCast(ptr));
+            self.receiver.toggleEffects();
+            return ctx.consumeAndRedraw();
+        }
+    }
 
     fn muteCallback(maybe_ptr: ?*anyopaque, ctx: *vxfw.EventContext) anyerror!void {
         if (maybe_ptr) |ptr| {
@@ -558,7 +584,7 @@ const RadioTuner = struct {
     fn presetCallback(maybe_ptr: ?*anyopaque, ctx: *vxfw.EventContext) anyerror!void {
         if (maybe_ptr) |ptr| {
             const self: *Self = @ptrCast(@alignCast(ptr));
-            // In a real implementation, you'd need to determine which preset was clicked
+            //FIXME In a real implementation, you'd need to determine which preset was clicked
             // For now, we'll just load preset 0 as an example
             self.loadPreset(0);
             return ctx.consumeAndRedraw();

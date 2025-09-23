@@ -22,6 +22,7 @@ pub const TapeSimulator = struct {
     sample_rate: f32,
     initialized: bool,
     block: radio.Block,
+    enabled: bool = false,
 
     const Self = @This();
 
@@ -51,22 +52,26 @@ pub const TapeSimulator = struct {
     /// Process audio samples through the complete tape simulation chain
     pub fn process(self: *Self, input_samples: []const f32, output_samples: []f32) !radio.ProcessResult {
         std.debug.assert(input_samples.len == output_samples.len);
+        if (!self.enabled) {
+            @memcpy(output_samples, input_samples);
+        } else {
 
-        // Temporary buffers for cascaded processing
-        const temp_buffer1 = try self.allocator.alloc(f32, input_samples.len);
-        defer self.allocator.free(temp_buffer1);
+            // Temporary buffers for cascaded processing
+            const temp_buffer1 = try self.allocator.alloc(f32, input_samples.len);
+            defer self.allocator.free(temp_buffer1);
 
-        const temp_buffer2 = try self.allocator.alloc(f32, input_samples.len);
-        defer self.allocator.free(temp_buffer2);
+            const temp_buffer2 = try self.allocator.alloc(f32, input_samples.len);
+            defer self.allocator.free(temp_buffer2);
 
-        const temp_buffer3 = try self.allocator.alloc(f32, input_samples.len);
-        defer self.allocator.free(temp_buffer3);
+            const temp_buffer3 = try self.allocator.alloc(f32, input_samples.len);
+            defer self.allocator.free(temp_buffer3);
 
-        // Signal processing chain
-        _ = try self.frequency_rolloff.process(input_samples, temp_buffer1);
-        _ = try self.dynamic_compressor.process(temp_buffer1, temp_buffer2);
-        _ = try self.wow_flutter.process(temp_buffer2, temp_buffer3);
-        _ = try self.awgn_noise.process(temp_buffer3, output_samples);
+            // Signal processing chain
+            _ = try self.frequency_rolloff.process(input_samples, temp_buffer1);
+            _ = try self.dynamic_compressor.process(temp_buffer1, temp_buffer2);
+            _ = try self.wow_flutter.process(temp_buffer2, temp_buffer3);
+            _ = try self.awgn_noise.process(temp_buffer3, output_samples);
+        }
 
         return radio.ProcessResult.init(&[1]usize{input_samples.len}, &[1]usize{output_samples.len});
     }

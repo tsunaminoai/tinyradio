@@ -448,7 +448,7 @@ pub const GainBlock = struct {
 
 /// Frequency Rolloff Filter Block (-3dB @ 3kHz)
 /// Simulates tape recorder high-frequency response limitations
-const FrequencyRolloffBlock = struct {
+pub const FrequencyRolloffBlock = struct {
     // IIR filter coefficients for -3dB @ 3kHz
     b0: f32,
     b1: f32,
@@ -500,7 +500,7 @@ const FrequencyRolloffBlock = struct {
 
 /// Dynamic Compression Block (70% threshold)
 /// Simulates tape saturation and dynamic range compression
-const DynamicCompressorBlock = struct {
+pub const DynamicCompressorBlock = struct {
     threshold: f32,
     ratio: f32,
     attack_coeff: f32,
@@ -572,7 +572,7 @@ const DynamicCompressorBlock = struct {
 
 /// Wow & Flutter Block (±0.3% speed variation)
 /// Simulates tape transport irregularities causing pitch/speed variations
-const WowFlutterBlock = struct {
+pub const WowFlutterBlock = struct {
     // Oscillators for wow and flutter
     wow_phase: f32,
     flutter_phase: f32,
@@ -652,7 +652,7 @@ const WowFlutterBlock = struct {
 
 /// AWGN Noise Block (SNR: 15-25dB)
 /// Simulates tape hiss and electronic noise
-const AwgnNoiseBlock = struct {
+pub const AwgnNoiseBlock = struct {
     // PRNG for noise generation
     prng: std.Random.DefaultPrng,
 

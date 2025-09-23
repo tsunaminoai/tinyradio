@@ -158,6 +158,10 @@ pub const RadioReceiver = struct {
     pub fn getPower(self: RadioReceiver) f32 {
         return self.power_meter.average_power;
     }
+    pub fn toggleEffects(self: *RadioReceiver) void {
+        self.effect.enabled = !self.effect.enabled;
+        self.effect2.enabled = !self.effect2.enabled;
+    }
 
     pub fn getAudioSamples(self: *RadioReceiver, buffer: []f32) !usize {
         _ = self; // autofix
