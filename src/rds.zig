@@ -1124,12 +1124,12 @@ test "RDS" {
 
     var iq = radio.blocks.IQStreamSource.init(reader.any(), .s16le, 192_000, .{});
     var tuner = radio.blocks.TunerBlock.init(0, 1_200_000, 2);
-    var rds = try RDS.init(tst.allocator, .{ .frequency = 8.1e6 });
+    var rds = try RDS.init(tst.allocator, .{ .frequency = 81e6 });
     // var rds = try RDSSignalBlock.init(tst.allocator);
     defer rds.deinit();
 
-    var sink = radio.blocks.JSONStreamSink(RDSDecoderBlock.RDSData).init(std.io.getStdErr().writer().any(), .{});
-    // var sink = radio.blocks.PrintSink(RDSDecoderBlock.RDSData).init();
+    // var sink = radio.blocks.JSONStreamSink(RDSDecoderBlock.RDSData).init(std.io.getStdErr().writer().any(), .{});
+    var sink = radio.blocks.PrintSink(RDSDecoderBlock.RDSData).init();
     // Connect the IQ source to the RDS decoder
     try fg.connect(&iq.block, &tuner.block);
     try fg.connect(&tuner.block, &rds.block);
