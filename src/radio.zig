@@ -6,6 +6,7 @@ const math = std.math;
 const radio = @import("radio");
 const rds = @import("rds.zig");
 const b = @import("blocks.zig");
+const e = @import("effects.zig");
 
 pub const RadioReceiver = struct {
     allocator: std.mem.Allocator,
@@ -20,6 +21,8 @@ pub const RadioReceiver = struct {
     af_gain_right: b.GainBlock,
     power_meter: radio.blocks.PowerMeterBlock(f32),
     agc: radio.blocks.AGCBlock(f32),
+    effect: e.TapeSimulator,
+    effect2: e.TapeSimulator,
 
     // demodulators
     fm: radio.blocks.WBFMMonoDemodulatorBlock,
@@ -37,6 +40,8 @@ pub const RadioReceiver = struct {
             .flowgraph = radio.Flowgraph.init(allocator, .{ .debug = debug }),
             .source = undefined,
             .rds = undefined,
+            .effect = try .init(allocator, 32_000),
+            .effect2 = try .init(allocator, 32_000),
             .sink = radio.blocks.PulseAudioSink(2).init(),
             .data_sink = .init(),
             .tuner = radio.blocks.TunerBlock.init(tune_offset, 200e3, 4),
@@ -123,8 +128,10 @@ pub const RadioReceiver = struct {
                 try self.flowgraph.connectPort(&self.tuner.block, "out1", &self.rds.block, "in1");
                 try self.flowgraph.connectPort(&self.fm_stereo.block, "out1", &self.af_gain_left.block, "in1");
                 try self.flowgraph.connectPort(&self.fm_stereo.block, "out2", &self.af_gain_right.block, "in1");
-                try self.flowgraph.connectPort(&self.af_gain_left.block, "out1", &self.sink.block, "in1");
-                try self.flowgraph.connectPort(&self.af_gain_right.block, "out1", &self.sink.block, "in2");
+                try self.flowgraph.connectPort(&self.af_gain_left.block, "out1", &self.effect.block, "in1");
+                try self.flowgraph.connectPort(&self.effect.block, "out1", &self.sink.block, "in1");
+                try self.flowgraph.connectPort(&self.af_gain_right.block, "out1", &self.effect2.block, "in1");
+                try self.flowgraph.connectPort(&self.effect2.block, "out1", &self.sink.block, "in2");
                 try self.flowgraph.connectPort(&self.rds.block, "out1", &self.data_sink.block, "in1");
             },
         }

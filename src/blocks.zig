@@ -445,3 +445,261 @@ pub const GainBlock = struct {
         return radio.ProcessResult.init(&[1]usize{input.len}, &[1]usize{idx});
     }
 };
+
+/// Frequency Rolloff Filter Block (-3dB @ 3kHz)
+/// Simulates tape recorder high-frequency response limitations
+const FrequencyRolloffBlock = struct {
+    // IIR filter coefficients for -3dB @ 3kHz
+    b0: f32,
+    b1: f32,
+    a1: f32,
+
+    // Filter state variables
+    x1: f32,
+    y1: f32,
+
+    sample_rate: f32,
+
+    const Self = @This();
+
+    pub fn init(allocator: std.mem.Allocator, sample_rate: f32) !Self {
+        _ = allocator; // Not needed for this simple filter
+
+        // Calculate IIR coefficients for 1-pole lowpass at 3kHz (-3dB point)
+        const cutoff_freq: f32 = 3000.0;
+        const omega = 2.0 * math.pi * cutoff_freq / sample_rate;
+        const alpha = math.tan(omega / 2.0);
+        const norm = 1.0 / (1.0 + alpha);
+
+        return Self{
+            .b0 = alpha * norm,
+            .b1 = alpha * norm,
+            .a1 = (1.0 - alpha) * norm,
+            .x1 = 0.0,
+            .y1 = 0.0,
+            .sample_rate = sample_rate,
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        _ = self; // No cleanup needed
+    }
+
+    pub fn process(self: *Self, input: []const f32, output: []f32) !radio.ProcessResult {
+        for (input, 0..) |sample, i| {
+            // Direct Form I IIR filter
+            output[i] = self.b0 * sample + self.b1 * self.x1 + self.a1 * self.y1;
+
+            // Update state
+            self.x1 = sample;
+            self.y1 = output[i];
+        }
+        return radio.ProcessResult.init(&[1]usize{input.len}, &[1]usize{input.len});
+    }
+};
+
+/// Dynamic Compression Block (70% threshold)
+/// Simulates tape saturation and dynamic range compression
+const DynamicCompressorBlock = struct {
+    threshold: f32,
+    ratio: f32,
+    attack_coeff: f32,
+    release_coeff: f32,
+
+    // State variables
+    envelope: f32,
+    gain_reduction: f32,
+
+    sample_rate: f32,
+
+    const Self = @This();
+
+    pub fn init(allocator: std.mem.Allocator, sample_rate: f32) !Self {
+        _ = allocator; // Not needed
+
+        // 70% threshold = -3dB in linear terms
+        const threshold_db: f32 = -3.0;
+        const threshold_linear = math.pow(f32, 10.0, threshold_db / 20.0);
+
+        // Attack/release time constants
+        const attack_time_ms: f32 = 5.0; // Fast attack for tape compression
+        const release_time_ms: f32 = 100.0; // Moderate release
+
+        const attack_coeff = math.exp(-1.0 / (sample_rate * attack_time_ms / 1000.0));
+        const release_coeff = math.exp(-1.0 / (sample_rate * release_time_ms / 1000.0));
+
+        return Self{
+            .threshold = threshold_linear,
+            .ratio = 4.0, // 4:1 compression ratio typical for tape
+            .attack_coeff = attack_coeff,
+            .release_coeff = release_coeff,
+            .envelope = 0.0,
+            .gain_reduction = 1.0,
+            .sample_rate = sample_rate,
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        _ = self; // No cleanup needed
+    }
+
+    pub fn process(self: *Self, input: []const f32, output: []f32) !radio.ProcessResult {
+        for (input, 0..) |sample, i| {
+            const abs_sample = @abs(sample);
+
+            // Envelope follower with attack/release
+            if (abs_sample > self.envelope) {
+                self.envelope += (abs_sample - self.envelope) * (1.0 - self.attack_coeff);
+            } else {
+                self.envelope += (abs_sample - self.envelope) * (1.0 - self.release_coeff);
+            }
+
+            // Calculate gain reduction
+            if (self.envelope > self.threshold) {
+                const overshoot = self.envelope / self.threshold;
+                const compressed_overshoot = math.pow(f32, overshoot, 1.0 / self.ratio);
+                self.gain_reduction = self.threshold * compressed_overshoot / self.envelope;
+            } else {
+                self.gain_reduction = 1.0;
+            }
+
+            // Apply compression with soft knee
+            output[i] = sample * self.gain_reduction;
+        }
+        return radio.ProcessResult.init(&[1]usize{input.len}, &[1]usize{input.len});
+    }
+};
+
+/// Wow & Flutter Block (±0.3% speed variation)
+/// Simulates tape transport irregularities causing pitch/speed variations
+const WowFlutterBlock = struct {
+    // Oscillators for wow and flutter
+    wow_phase: f32,
+    flutter_phase: f32,
+
+    // Delay line for pitch shifting via time-domain interpolation
+    delay_buffer: []f32,
+    delay_length: usize,
+    write_index: usize,
+
+    sample_rate: f32,
+    allocator: std.mem.Allocator,
+
+    const Self = @This();
+
+    pub fn init(allocator: std.mem.Allocator, sample_rate: f32) !Self {
+        // Delay buffer for ±0.3% speed variation
+        const max_delay_samples = @as(usize, @intFromFloat(sample_rate * 0.01)); // 10ms buffer
+        const delay_buffer = try allocator.alloc(f32, max_delay_samples);
+        @memset(delay_buffer, 0.0);
+
+        return Self{
+            .wow_phase = 0.0,
+            .flutter_phase = 0.0,
+            .delay_buffer = delay_buffer,
+            .delay_length = max_delay_samples,
+            .write_index = 0,
+            .sample_rate = sample_rate,
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.allocator.free(self.delay_buffer);
+    }
+
+    pub fn process(self: *Self, input: []const f32, output: []f32) !radio.ProcessResult {
+        const wow_freq: f32 = 0.5; // 0.5Hz wow frequency
+        const flutter_freq: f32 = 6.0; // 6Hz flutter frequency
+        const speed_variation: f32 = 0.003; // ±0.3%
+
+        for (input, 0..) |sample, i| {
+            // Write input to delay buffer
+            self.delay_buffer[self.write_index] = sample;
+
+            // Calculate wow and flutter modulation
+            const wow = math.sin(self.wow_phase) * speed_variation;
+            const flutter = math.sin(self.flutter_phase) * speed_variation * 0.5; // Flutter is typically smaller
+            const total_modulation = wow + flutter;
+
+            // Calculate variable delay (negative modulation = faster playback)
+            const delay_samples = self.sample_rate * 0.005 * (1.0 + total_modulation); // Base delay with modulation
+            const delay_int = @as(usize, @intFromFloat(delay_samples));
+            const delay_frac = delay_samples - @as(f32, @floatFromInt(delay_int));
+
+            // Linear interpolation for fractional delay
+            const read_index1 = (self.write_index + self.delay_length - delay_int) % self.delay_length;
+            const read_index2 = (read_index1 + self.delay_length - 1) % self.delay_length;
+
+            const sample1 = self.delay_buffer[read_index1];
+            const sample2 = self.delay_buffer[read_index2];
+
+            output[i] = sample1 * (1.0 - delay_frac) + sample2 * delay_frac;
+
+            // Update oscillator phases
+            self.wow_phase += 2.0 * math.pi * wow_freq / self.sample_rate;
+            self.flutter_phase += 2.0 * math.pi * flutter_freq / self.sample_rate;
+
+            if (self.wow_phase >= 2.0 * math.pi) self.wow_phase -= 2.0 * math.pi;
+            if (self.flutter_phase >= 2.0 * math.pi) self.flutter_phase -= 2.0 * math.pi;
+
+            // Advance write index
+            self.write_index = (self.write_index + 1) % self.delay_length;
+        }
+        return radio.ProcessResult.init(&[1]usize{input.len}, &[1]usize{input.len});
+    }
+};
+
+/// AWGN Noise Block (SNR: 15-25dB)
+/// Simulates tape hiss and electronic noise
+const AwgnNoiseBlock = struct {
+    // PRNG for noise generation
+    prng: std.Random.DefaultPrng,
+
+    // Noise parameters
+    signal_power: f32,
+    noise_variance: f32,
+    snr_db: f32,
+
+    sample_rate: f32,
+
+    const Self = @This();
+
+    pub fn init(allocator: std.mem.Allocator, sample_rate: f32) !Self {
+        _ = allocator; // Not needed
+
+        const initial_snr: f32 = 20.0; // Default 20dB SNR
+
+        return Self{
+            .prng = std.Random.DefaultPrng.init(@as(u64, @intCast(std.time.timestamp()))),
+            .signal_power = 1.0,
+            .noise_variance = math.pow(f32, 10.0, -initial_snr / 10.0),
+            .snr_db = initial_snr,
+            .sample_rate = sample_rate,
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        _ = self; // No cleanup needed
+    }
+
+    pub fn setSnr(self: *Self, snr_db: f32) void {
+        self.snr_db = snr_db;
+        self.noise_variance = math.pow(f32, 10.0, -snr_db / 10.0);
+    }
+
+    pub fn process(self: *Self, input: []const f32, output: []f32) !radio.ProcessResult {
+        var random = self.prng.random();
+
+        for (input, 0..) |sample, i| {
+            // Box-Muller transform for Gaussian noise
+            const _u1 = random.float(f32);
+            const _u2 = random.float(f32);
+            const noise = math.sqrt(-2.0 * math.log(f32, math.e, _u1)) * math.cos(2.0 * math.pi * _u2) * math.sqrt(self.noise_variance);
+
+            // Add noise to signal
+            output[i] = sample + noise;
+        }
+        return radio.ProcessResult.init(&[1]usize{input.len}, &[1]usize{input.len});
+    }
+};
