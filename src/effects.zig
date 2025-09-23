@@ -51,9 +51,9 @@ pub const TapeSimulator = struct {
 
     /// Process audio samples through the complete tape simulation chain
     pub fn process(self: *Self, input_samples: []const f32, output_samples: []f32) !radio.ProcessResult {
-        std.debug.assert(input_samples.len == output_samples.len);
+        std.debug.assert(input_samples.len <= output_samples.len);
         if (!self.enabled) {
-            @memcpy(output_samples, input_samples);
+            @memcpy(output_samples[0..input_samples.len], input_samples);
         } else {
 
             // Temporary buffers for cascaded processing

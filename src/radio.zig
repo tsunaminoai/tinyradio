@@ -7,6 +7,7 @@ const radio = @import("radio");
 const rds = @import("rds.zig");
 const b = @import("blocks.zig");
 const e = @import("effects.zig");
+const print = std.debug.print;
 
 pub const RadioReceiver = struct {
     allocator: std.mem.Allocator,
@@ -14,6 +15,7 @@ pub const RadioReceiver = struct {
     source: radio.blocks.RtlSdrSource,
     sink: radio.blocks.PulseAudioSink(2),
     data_sink: radio.blocks.PrintSink(rds.RDSDecoderBlock.RDSData),
+    fft_sink: b.FFTBandAnalyzer(10, 256),
 
     // base nodes
     tuner: radio.blocks.TunerBlock,
@@ -40,6 +42,7 @@ pub const RadioReceiver = struct {
             .flowgraph = radio.Flowgraph.init(allocator, .{ .debug = debug }),
             .source = undefined,
             .rds = undefined,
+            .fft_sink = try .init(allocator, 32_000),
             .effect = try .init(allocator, 32_000),
             .effect2 = try .init(allocator, 32_000),
             .sink = radio.blocks.PulseAudioSink(2).init(),
@@ -63,6 +66,7 @@ pub const RadioReceiver = struct {
     pub fn deinit(self: *RadioReceiver) void {
         self.flowgraph.deinit();
         self.rds.deinit();
+        self.fft_sink.deinit();
         // if (self.source) |source| source.deinit();
         // if (self.sink) |sink| sink.deinit();
         // if (self.fm_demod) |demod| demod.deinit();
@@ -111,8 +115,11 @@ pub const RadioReceiver = struct {
             .FM => {
                 try self.flowgraph.connectPort(&self.tuner.block, "out1", &self.fm.block, "in1");
                 try self.flowgraph.connectPort(&self.fm.block, "out1", &self.power_meter.block, "in1");
-                try self.flowgraph.connectPort(&self.fm.block, "out1", &self.af_gain_left.block, "in1");
-                try self.flowgraph.connectPort(&self.fm.block, "out1", &self.af_gain_right.block, "in1");
+
+                try self.flowgraph.connectPort(&self.fm.block, "out1", &self.effect.block, "in1");
+                // try self.flowgraph.connectPort(&self.effect.block, "out1", &self.fft_sink.block, "in1");
+                try self.flowgraph.connectPort(&self.effect.block, "out1", &self.af_gain_left.block, "in1");
+                try self.flowgraph.connectPort(&self.effect.block, "out1", &self.af_gain_right.block, "in1");
                 try self.flowgraph.connectPort(&self.af_gain_left.block, "out1", &self.sink.block, "in1");
                 try self.flowgraph.connectPort(&self.af_gain_right.block, "out1", &self.sink.block, "in2");
             },
@@ -130,6 +137,7 @@ pub const RadioReceiver = struct {
                 try self.flowgraph.connectPort(&self.fm_stereo.block, "out2", &self.af_gain_right.block, "in1");
                 try self.flowgraph.connectPort(&self.af_gain_left.block, "out1", &self.effect.block, "in1");
                 try self.flowgraph.connectPort(&self.effect.block, "out1", &self.sink.block, "in1");
+                // try self.flowgraph.connectPort(&self.effect.block, "out1", &self.fft_sink.block, "in1");
                 try self.flowgraph.connectPort(&self.af_gain_right.block, "out1", &self.effect2.block, "in1");
                 try self.flowgraph.connectPort(&self.effect2.block, "out1", &self.sink.block, "in2");
                 try self.flowgraph.connectPort(&self.rds.block, "out1", &self.data_sink.block, "in1");

@@ -3,6 +3,8 @@ const Array = std.ArrayList;
 const Allocator = std.mem.Allocator;
 const tst = std.testing;
 const math = std.math;
+const print = std.debug.print;
+
 const radio = @import("radio");
 /// Hilbert Transform Block - converts real signal to complex analytic signal
 ///
@@ -703,3 +705,234 @@ pub const AwgnNoiseBlock = struct {
         return radio.ProcessResult.init(&[1]usize{input.len}, &[1]usize{input.len});
     }
 };
+
+pub fn FFTBandAnalyzer(comptime numBands: usize, comptime fftSize: usize) type {
+    std.debug.assert(math.isPowerOfTwo(fftSize));
+
+    return struct {
+        block: radio.Block,
+        fft_size: usize = fftSize,
+        sample_rate: f32,
+
+        // working buffers
+        time_buffer: [fftSize]f32 = undefined,
+        freq_buffer: [fftSize]math.Complex(f32) = undefined,
+        window_function: [fftSize]f32 = blk: {
+            var tmp: [fftSize]f32 = undefined;
+            for (0..fftSize) |i| {
+                const n = @as(f32, @floatFromInt(i));
+                const N = @as(f32, @floatFromInt(fftSize));
+                tmp[i] = 0.5 * (1.0 - math.cos(2.0 * math.pi * n / (N - 1.0)));
+            }
+            break :blk tmp;
+        },
+
+        // band analysis
+        band_mags: [numBands]f32 = undefined,
+        band_freqs: [numBands]f32 = blk: {
+            var tmp: [numBands]f32 = undefined;
+            for (0..numBands) |i| {
+                tmp[i] = (@as(f32, @floatFromInt(i)) + 0.5) * (MaxFreq / numBands);
+            }
+            break :blk tmp;
+        },
+
+        //processing
+        input_idx: usize = 0,
+        frames_processed: usize = 0,
+
+        allocator: Allocator,
+
+        const Self = @This();
+        const MaxFreq = 20_000;
+
+        pub fn init(alloc: Allocator, sample_rate: f32) !Self {
+            if (sample_rate < MaxFreq) return error.InsufficientSampleRate;
+
+            return Self{
+                .block = radio.Block.init(Self),
+                .allocator = alloc,
+                .sample_rate = sample_rate,
+            };
+        }
+        pub fn deinit(self: *Self) void {
+            _ = self; // autofix
+
+        }
+        /// Process incoming audio samples and update band analysis
+        pub fn process(self: *Self, input_samples: []const f32) !radio.ProcessResult {
+            for (input_samples) |sample| {
+                // Fill circular buffer
+                self.time_buffer[self.input_idx] = sample;
+                self.input_idx = (self.input_idx + 1) % self.fft_size;
+
+                // Perform FFT when buffer is full
+                if (self.input_idx == 0) {
+                    self.performFFTAnalysis();
+                    self.frames_processed += 1;
+                }
+            }
+            return radio.ProcessResult.init(&[1]usize{input_samples.len}, &[0]usize{});
+        }
+
+        /// Perform FFT analysis and update band magnitudes
+        fn performFFTAnalysis(self: *Self) void {
+            // Apply window function to time domain data
+            for (&self.freq_buffer, 0..) |*freq_sample, i| {
+                const windowed_sample = self.time_buffer[i] * self.window_function[i];
+                freq_sample.* = math.Complex(f32).init(windowed_sample, 0.0);
+            }
+
+            // Perform FFT (using Cooley-Tukey radix-2 algorithm)
+            self.fft(&self.freq_buffer);
+
+            // Calculate band magnitudes
+            self.calculateBandMagnitudes();
+        }
+
+        /// Calculate magnitude for each of the 10 frequency bands
+        fn calculateBandMagnitudes(self: *Self) void {
+            const bin_resolution = self.sample_rate / @as(f32, @floatFromInt(self.fft_size));
+            const band_width = MaxFreq / numBands;
+
+            // Initialize band magnitudes
+            @memset(&self.band_mags, 0.0);
+
+            for (0..numBands) |band| {
+                const band_start_freq = @as(f32, @floatFromInt(band)) * band_width;
+                const band_end_freq = band_start_freq + band_width;
+
+                const start_bin = @as(usize, @intFromFloat(band_start_freq / bin_resolution));
+                const end_bin = @as(usize, @intFromFloat(band_end_freq / bin_resolution));
+
+                var band_power: f32 = 0.0;
+                var bin_count: u32 = 0;
+
+                // Sum power in frequency band (using only positive frequencies)
+                for (start_bin..@min(end_bin, self.fft_size / 2)) |bin| {
+                    const magnitude = self.freq_buffer[bin].magnitude();
+                    band_power += magnitude * magnitude;
+                    bin_count += 1;
+                }
+
+                // Calculate RMS magnitude and convert to dB
+                if (bin_count > 0) {
+                    const rms_magnitude = math.sqrt(band_power / @as(f32, @floatFromInt(bin_count)));
+                    // Convert to dB with reference level (prevent log(0))
+                    const db_magnitude = 20.0 * math.log10(@max(rms_magnitude, 1e-10));
+                    self.band_mags[band] = db_magnitude;
+                }
+            }
+        }
+        /// FFT implementation using Cooley-Tukey radix-2 algorithm
+        fn fft(self: *Self, x: []math.Complex(f32)) void {
+            _ = self; // autofix
+            const N = x.len;
+            if (N <= 1) return;
+
+            // Bit-reversal permutation
+            var j: usize = 0;
+            for (x, 0..) |_, i| {
+                if (i < j) {
+                    const temp = x[i];
+                    x[i] = x[j];
+                    x[j] = temp;
+                }
+
+                var k = N >> 1;
+                while (j & k != 0) {
+                    j ^= k;
+                    k >>= 1;
+                }
+                j ^= k;
+            }
+
+            // Cooley-Tukey butterfly operations
+            var length: usize = 2;
+            while (length <= N) {
+                const angle = -2.0 * math.pi / @as(f32, @floatFromInt(length));
+                const wlen = math.Complex(f32).init(math.cos(angle), math.sin(angle));
+
+                var i: usize = 0;
+                while (i < N) {
+                    var w = math.Complex(f32).init(1.0, 0.0);
+                    var j2: usize = 0;
+                    while (j < length / 2) {
+                        const u = x[i + j];
+                        const v = x[i + j + length / 2].mul(w);
+
+                        if (i + j2 >= x.len or i + j2 + length / 2 >= x.len) continue;
+
+                        x[i + j2] = u.add(v);
+                        x[i + j2 + length / 2] = u.sub(v);
+
+                        w = w.mul(wlen);
+                        j2 += 1;
+                    }
+                    i += length;
+                }
+                length *= 2;
+            }
+        }
+
+        /// Get current band analysis results
+        pub fn getBandMagnitudes(self: *const Self) [numBands]f32 {
+            return self.band_magnitudes;
+        }
+
+        /// Get band center frequencies
+        pub fn getBandFrequencies(self: *const Self) [numBands]f32 {
+            return self.band_frequencies;
+        }
+
+        /// Get processing statistics
+        pub fn getStats(self: *const Self) FFTAnalysisStats {
+            return FFTAnalysisStats{
+                .frames_processed = self.frames_processed,
+                .frequency_resolution = self.sample_rate / @as(f32, @floatFromInt(self.fft_size)),
+                .analysis_bandwidth = MaxFreq / numBands,
+            };
+        }
+
+        pub fn printBandAnalysis(self: Self) void {
+            const magnitudes = self.getBandMagnitudes();
+            const frequencies = self.getBandFrequencies();
+            const stats = self.getStats();
+
+            print("\n=== 10-Band FFT Analysis (0-20kHz) ===\n");
+            print("Frequency Resolution: {d:.2} Hz\n", .{stats.frequency_resolution});
+            print("Frames Processed: {}\n", .{stats.frames_processed});
+            print("\nBand Analysis:\n");
+
+            for (magnitudes, frequencies, 0..) |magnitude, center_freq, i| {
+                const band_start = center_freq - 1000.0;
+                const band_end = center_freq + 1000.0;
+                const bar_length = Self.magnitudeToBarLength(magnitude);
+
+                print("Band {}: {d:>5.0}-{d:>5.0} Hz | {d:>6.1} dB |", .{ i + 1, band_start, band_end, magnitude });
+
+                // Visual bar representation
+                var j: usize = 0;
+                while (j < bar_length) : (j += 1) {
+                    print("█");
+                }
+                print("\n");
+            }
+            print("================================\n");
+        }
+
+        fn magnitudeToBarLength(magnitude_db: f32) usize {
+            // Map dB range (-60 to 0 dB) to bar length (0 to 40 chars)
+            const normalized = math.clamp((magnitude_db + 60.0) / 60.0, 0.0, 1.0);
+            return @as(usize, @intFromFloat(normalized * 40.0));
+        }
+    };
+}
+/// Analysis statistics structure
+pub const FFTAnalysisStats = struct {
+    frames_processed: u64,
+    frequency_resolution: f32,
+    analysis_bandwidth: f32,
+};
+
+test "fft band" {}
