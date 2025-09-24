@@ -141,7 +141,7 @@ pub const RadioReceiver = struct {
         _ = try self.flowgraph.stop();
     }
     pub fn getPower(self: RadioReceiver) f32 {
-        return dbfsToPercent(self.snr.getSNRResults().signal_power_db / 100);
+        return dbfsToPercent(self.snr.getSNRResults().signal_power_db * 4); // FIXME this is a fudge factor
     }
 
     pub fn getAudioSamples(self: *RadioReceiver, buffer: []f32) !usize {
