@@ -76,6 +76,7 @@ const RadioTuner = struct {
         const r = try alloc.create(radio.RadioReceiver);
         errdefer alloc.destroy(r);
         r.* = try .init(alloc, false);
+        r.* = try .init(alloc, false);
         errdefer r.deinit();
 
         const tui = Self{
@@ -245,7 +246,7 @@ const RadioTuner = struct {
         }
 
         // Create children surfaces
-        var children = std.ArrayList(vxfw.SubSurface).init(ctx.arena);
+        var children = std.ArrayList(vxfw.SubSurface){};
 
         // title row
         const titleRow = vxfw.FlexRow{
@@ -262,7 +263,7 @@ const RadioTuner = struct {
                 },
             },
         };
-        try children.append(.{
+        try children.append(ctx.arena, .{
             .origin = .{ .row = 0, .col = 0 },
             .surface = try titleRow.draw(ctx),
         });
@@ -274,7 +275,7 @@ const RadioTuner = struct {
             @tagName(self.current_band),
         });
         const freq_display = vxfw.Text{ .text = freq_text };
-        try children.append(.{
+        try children.append(ctx.arena, .{
             .origin = .{ .row = 3, .col = 2 },
             .surface = try freq_display.draw(ctx),
         });
@@ -296,7 +297,7 @@ const RadioTuner = struct {
                 .bg = vaxis.Color.rgbFromUint(0x0000ff),
             },
         };
-        try children.append(.{
+        try children.append(ctx.arena, .{
             .origin = .{ .row = 4, .col = 2 },
             .surface = try signal_text.draw(ctx),
         });
@@ -307,7 +308,7 @@ const RadioTuner = struct {
             if (self.is_muted) "[MUTED]" else "",
         });
         const volume_display = vxfw.Text{ .text = volume_text };
-        try children.append(.{
+        try children.append(ctx.arena, .{
             .origin = .{ .row = 5, .col = 2 },
             .surface = try volume_display.draw(ctx),
         });
@@ -319,7 +320,7 @@ const RadioTuner = struct {
         var col_offset: u16 = 2;
 
         // Frequency controls
-        try children.append(.{
+        try children.append(ctx.arena, .{
             .origin = .{ .row = 7, .col = col_offset },
             .surface = try self.freq_down_button.draw(ctx.withConstraints(
                 ctx.min,
@@ -328,7 +329,7 @@ const RadioTuner = struct {
         });
         col_offset += button_spacing;
 
-        try children.append(.{
+        try children.append(ctx.arena, .{
             .origin = .{ .row = 7, .col = col_offset },
             .surface = try self.freq_up_button.draw(ctx.withConstraints(
                 ctx.min,
@@ -338,7 +339,7 @@ const RadioTuner = struct {
         col_offset += button_spacing;
 
         // Band toggle
-        try children.append(.{
+        try children.append(ctx.arena, .{
             .origin = .{ .row = 7, .col = col_offset },
             .surface = try self.band_toggle_button.draw(ctx.withConstraints(
                 ctx.min,
@@ -348,7 +349,7 @@ const RadioTuner = struct {
         col_offset += button_spacing;
 
         // Volume controls
-        try children.append(.{
+        try children.append(ctx.arena, .{
             .origin = .{ .row = 7, .col = col_offset },
             .surface = try self.volume_down_button.draw(ctx.withConstraints(
                 ctx.min,
@@ -357,7 +358,7 @@ const RadioTuner = struct {
         });
         col_offset += button_spacing;
         // Mute button
-        try children.append(.{
+        try children.append(ctx.arena, .{
             .origin = .{ .row = 7, .col = col_offset },
             .surface = try self.mute_button.draw(ctx.withConstraints(
                 ctx.min,
@@ -366,7 +367,7 @@ const RadioTuner = struct {
         });
         col_offset += button_spacing;
 
-        try children.append(.{
+        try children.append(ctx.arena, .{
             .origin = .{ .row = 7, .col = col_offset },
             .surface = try self.volume_up_button.draw(ctx.withConstraints(
                 ctx.min,
@@ -375,7 +376,7 @@ const RadioTuner = struct {
         });
         col_offset += button_spacing;
 
-        try children.append(.{
+        try children.append(ctx.arena, .{
             .origin = .{ .row = 7, .col = col_offset },
             .surface = try self.effects_button.draw(ctx.withConstraints(
                 ctx.min,
@@ -386,7 +387,7 @@ const RadioTuner = struct {
 
         // Presets section
         const presets_title = vxfw.Text{ .text = "Presets (Press 1-6):" };
-        try children.append(.{
+        try children.append(ctx.arena, .{
             .origin = .{ .row = 15, .col = 2 },
             .surface = try presets_title.draw(ctx),
         });
@@ -409,7 +410,7 @@ const RadioTuner = struct {
             if (self.current_preset == i)
                 preset_button.style.default = .{ .fg = .{ .rgb = [_]u8{ 0, 130, 200 } }, .reverse = true };
 
-            try children.append(.{
+            try children.append(ctx.arena, .{
                 .origin = .{ .row = preset_row, .col = preset_col },
                 .surface = try preset_button.draw(ctx.withConstraints(
                     ctx.min,
@@ -421,7 +422,7 @@ const RadioTuner = struct {
         // Status bar
         const status_display = try std.fmt.allocPrint(ctx.arena, "Status: {s}", .{self.status_text});
         const status = vxfw.Text{ .text = status_display };
-        try children.append(.{
+        try children.append(ctx.arena, .{
             .origin = .{ .row = @as(u16, @intCast(max_size.height - 2)), .col = 2 },
             .surface = try status.draw(ctx),
         });
@@ -429,7 +430,7 @@ const RadioTuner = struct {
         // Help text
         const help_text = "Controls: ↑/↓ Freq | B Band | M Mute | +/- Volume | 1-6 Presets | Q/Ctrl+C Quit";
         const help = vxfw.Text{ .text = help_text };
-        try children.append(.{
+        try children.append(ctx.arena, .{
             .origin = .{ .row = @as(u16, @intCast(max_size.height - 1)), .col = 2 },
             .surface = try help.draw(ctx),
         });
@@ -438,7 +439,7 @@ const RadioTuner = struct {
             .size = max_size,
             .widget = self.widget(),
             .buffer = &.{},
-            .children = try children.toOwnedSlice(),
+            .children = try children.toOwnedSlice(ctx.arena),
         };
     }
 

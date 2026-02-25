@@ -273,13 +273,13 @@ pub fn SamplerBlock(comptime T: type) type {
             return .{
                 .block = radio.Block.init(Self),
                 .last_clock = 0,
-                .data_buffer = std.ArrayList(T).init(allocator),
+                .data_buffer = std.ArrayList(T){},
                 .allocator = allocator,
             };
         }
 
         pub fn deinit(self: *Self) void {
-            self.data_buffer.deinit();
+            self.data_buffer.deinit(self.allocator);
         }
 
         pub fn process(self: *Self, data_input: []const T, clock_input: []const f32, output: []T) !radio.ProcessResult {

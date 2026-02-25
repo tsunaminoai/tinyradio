@@ -180,15 +180,47 @@ pub const RadioReceiver = struct {
     }
 };
 
-// test {
-//     var r = try RadioReceiver.init(tst.allocator, true);
-//     defer r.deinit();
+test {
+    var r = try RadioReceiver.init(tst.allocator, true);
+    defer r.deinit();
 
-//     try r.connect(.FM);
-//     try r.start();
-//     radio.platform.waitForInterrupt();
-//     try r.stop();
-// }
+    try r.connect(.FM);
+    try r.start();
+    // radio.platform.waitForInterrupt();
+    try r.stop();
+}
+
+pub const GainBlock = struct {
+    block: radio.Block,
+    gain: f32,
+    const Self = @This();
+
+    pub fn init(initial_gain: f32) GainBlock {
+        return .{
+            .block = radio.Block.init(Self),
+            .gain = initial_gain,
+        };
+    }
+    pub fn setGain(self: *Self, linear_gain: f32) void {
+        self.gain = linear_gain;
+    }
+
+    pub fn setGainDB(self: *Self, gain_db: f32) void {
+        const linear_gain = std.math.pow(f32, 10.0, gain_db / 20.0);
+        self.gain = linear_gain;
+    }
+
+    // ZigRadio block interface method
+
+    pub fn process(self: *Self, input: []const f32, output: []f32) !radio.ProcessResult {
+        var idx: usize = 0;
+        while (idx < input.len) {
+            output[idx] = input[idx] * self.gain;
+            idx += 1;
+        }
+        return radio.ProcessResult.init(&[1]usize{input.len}, &[1]usize{idx});
+    }
+};
 
 // Radio band definitions
 pub const Band =
