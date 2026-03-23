@@ -47,7 +47,7 @@ pub const RDS = struct {
             .bit_slicer = .init(),
             .bit_decoder = .init(),
             .bit_diff_decode = .init(),
-            .framer = .init(alloc),
+            .framer = .init(),
             .decoder = .init(alloc),
         };
     }
@@ -279,12 +279,13 @@ pub const RDSDecoderBlock = struct {
             return error.InvalidInput;
         }
 
-        // Extract the 4 blocks (A, B, C, D) from the frame
-        // Each block is 26 bits: 16 bits data + 10 bits checkword
-        const block_a = self.extractBlock(input[0..4]);
-        const block_b = self.extractBlock(input[3..7]);
-        const block_c = self.extractBlock(input[6..10]);
-        const block_d = self.extractBlock(input[9..13]);
+        // Extract the 4 blocks (A, B, C, D) from the frame.
+        // Each block is 26 bits: 16 bits data + 10 bits checkword.
+        // Data words are not byte-aligned; extractDataWord handles bit offsets.
+        const block_a = extractDataWord(input[0..13], 0);
+        const block_b = extractDataWord(input[0..13], 1);
+        const block_c = extractDataWord(input[0..13], 2);
+        const block_d = extractDataWord(input[0..13], 3);
 
         // Block A is always the PI code
         self.pi_code = block_a;
@@ -392,7 +393,7 @@ pub const RDSDecoderBlock = struct {
         self.groups_decoded += 1;
         output[0] = self.getRDSData();
 
-        return radio.ProcessResult.init(&[1]usize{input.len}, &[1]usize{1});
+        return radio.ProcessResult.init(&[1]usize{13}, &[1]usize{1});
     }
 
     pub fn getRDSData(self: *Self) RDSData {
@@ -406,12 +407,18 @@ pub const RDSDecoderBlock = struct {
         };
     }
 
-    fn extractBlock(self: *Self, bytes: []const u8) u16 {
-        _ = self;
-        // Extract 16-bit data word from block (first 16 bits)
-        // In real implementation, would also check/correct with syndrome
-        if (bytes.len < 2) return 0;
-        return (@as(u16, bytes[0]) << 8) | @as(u16, bytes[1]);
+    /// Extract the 16-bit data word for block N (0=A, 1=B, 2=C, 3=D) from
+    /// the packed 13-byte (104-bit) RDS frame. Each block is 26 bits so the
+    /// data words are not byte-aligned for blocks B, C, D.
+    fn extractDataWord(frame: []const u8, block_idx: u2) u16 {
+        const bit_start: u32 = @as(u32, block_idx) * 26;
+        const bs: usize = bit_start / 8;
+        const bo: u5 = @intCast(bit_start % 8);
+        // Read 3 consecutive bytes that span the 16-bit data word
+        const v: u32 = (@as(u32, frame[bs]) << 16) |
+            (@as(u32, frame[bs + 1]) << 8) |
+            @as(u32, frame[bs + 2]);
+        return @truncate((v >> (8 - bo)) & 0xFFFF);
     }
 
     fn processAF(self: *Self, af_data: u16) void {
@@ -543,163 +550,111 @@ pub const RDSDecoderBlock = struct {
 /// https://github.com/vsergeev/luaradio/blob/master/radio/blocks/protocol/rdsframer.lua
 pub const RDSFramerBlock = struct {
     block: radio.Block,
+    /// 104-bit shift register: oldest bit at [0], newest at [FrameLen-1].
+    frame: [FrameLen]u1 = [_]u1{0} ** FrameLen,
+    /// How many bits have been loaded into `frame` (saturates at FrameLen).
+    fill: usize = 0,
     synchronized: bool = false,
-    rds_frame: [FrameLen]u1,
-    rds_frame_len: usize = 0,
-    bit_buffer: [FrameLen * 2]u1,
-    bit_buffer_len: usize = 0,
-    allocator: std.mem.Allocator,
+    /// Counts bits received since the last frame boundary (locked mode).
+    bit_counter: usize = 0,
 
     const FrameLen = 104;
     const BlockLen = 26;
-    const OffsetWord = enum(u12) {
+    const OffsetWord = enum(u10) {
         A = 0x0fc,
         B = 0x198,
         C = 0x168,
-        Cp = 0x350,
+        Cp = 0x340, // version-B block 3
         D = 0x1b4,
     };
 
-    pub fn init(allocator: std.mem.Allocator) RDSFramerBlock {
-        return .{
-            .block = radio.Block.init(RDSFramerBlock),
-            .synchronized = false,
-            .rds_frame = [_]u1{0} ** FrameLen,
-            .rds_frame_len = 0,
-            .bit_buffer = [_]u1{0} ** (FrameLen * 2),
-            .bit_buffer_len = 0,
-            .allocator = allocator,
-        };
+    pub fn init() RDSFramerBlock {
+        return .{ .block = radio.Block.init(RDSFramerBlock) };
     }
+
     pub fn process(self: *RDSFramerBlock, x: []const u1, y: []u8) !radio.ProcessResult {
         var frames_out: usize = 0;
 
-        for (x) |sample| {
-            // Convert float to bit (threshold at 0)
-            const bit: u1 = if (sample > 0) 1 else 0;
-
-            // Add to bit buffer
-            if (self.bit_buffer_len < self.bit_buffer.len) {
-                self.bit_buffer[self.bit_buffer_len] = bit;
-                self.bit_buffer_len += 1;
+        for (x) |bit| {
+            // Shift bit into the 104-bit window.
+            if (self.fill < FrameLen) {
+                self.frame[self.fill] = bit;
+                self.fill += 1;
+                if (self.fill < FrameLen) continue;
             } else {
-                // Shift buffer left and add new bit
-                std.mem.copyForwards(u1, self.bit_buffer[0 .. self.bit_buffer.len - 1], self.bit_buffer[1..]);
-                self.bit_buffer[self.bit_buffer.len - 1] = bit;
+                // Slide left: discard oldest bit, append new bit at end.
+                std.mem.copyForwards(u1, self.frame[0 .. FrameLen - 1], self.frame[1..FrameLen]);
+                self.frame[FrameLen - 1] = bit;
             }
 
-            // Try to synchronize if we have enough bits
-            if (self.bit_buffer_len >= FrameLen) {
-                if (!self.synchronized) {
-                    // Try to find sync by checking for valid syndrome
-                    if (try self.checkSync()) {
-                        self.synchronized = true;
-                        // Copy frame
-                        std.mem.copyForwards(u1, &self.rds_frame, self.bit_buffer[0..FrameLen]);
-                        self.rds_frame_len = FrameLen;
-                    }
-                } else {
-                    // We're synchronized, check if we still have valid frames
-                    self.rds_frame_len += 1;
-                    if (self.rds_frame_len >= FrameLen) {
-                        // Output frame
-                        if (frames_out < y.len) {
-                            // Convert bits to bytes for output
-                            var frame_bytes: [13]u8 = undefined; // 104 bits = 13 bytes
-                            for (0..13) |byte_idx| {
+            // frame now contains exactly FrameLen bits.
+            if (!self.synchronized) {
+                // Hunting: accept when 3 of 4 block syndromes are valid.
+                if (countValidBlocks(&self.frame) >= 3) {
+                    self.synchronized = true;
+                    self.bit_counter = 0;
+                }
+            } else {
+                self.bit_counter += 1;
+                if (self.bit_counter >= FrameLen) {
+                    self.bit_counter = 0;
+                    const valid = countValidBlocks(&self.frame);
+                    if (valid >= 2) {
+                        // Output the frame (pack 104 bits → 13 bytes).
+                        if ((frames_out + 1) * 13 <= y.len) {
+                            for (0..13) |bi| {
                                 var byte: u8 = 0;
-                                for (0..8) |bit_idx| {
-                                    const bit_pos = byte_idx * 8 + bit_idx;
-                                    if (bit_pos < FrameLen) {
-                                        byte |= @as(u8, self.rds_frame[bit_pos]) << @intCast(7 - bit_idx);
-                                    }
+                                for (0..8) |bj| {
+                                    byte |= @as(u8, self.frame[bi * 8 + bj]) << @intCast(7 - bj);
                                 }
-                                frame_bytes[byte_idx] = byte;
+                                y[frames_out * 13 + bi] = byte;
                             }
-                            @memcpy(y[frames_out * FrameLen .. (frames_out + 1) * FrameLen], &frame_bytes);
                             frames_out += 1;
                         }
-
-                        // Shift in new frame
-                        std.mem.copyForwards(u1, &self.rds_frame, self.bit_buffer[0..FrameLen]);
-                        self.rds_frame_len = 0;
-
-                        // Check if still synchronized
-                        if (!self.validateFrame(&self.rds_frame)) {
-                            self.synchronized = false;
-                        }
+                    } else {
+                        // Lost lock.
+                        self.synchronized = false;
                     }
                 }
             }
         }
 
-        return radio.ProcessResult.init(&[1]usize{x.len}, &[1]usize{frames_out});
-    }
-    /// Block bits layout:
-    ///  MMMM MMMM MMMM MMMM CC CCCC CCCC
-    /// 26-bits block = 16-bits message + 10-bits error correcting code
-    fn correct_block(self: *RDSFramerBlock, block_bits: []const u1, offset: OffsetWord) !void {
-        _ = block_bits; // autofix
-        _ = self; // autofix
-        _ = offset; // autofix
+        return radio.ProcessResult.init(&[1]usize{x.len}, &[1]usize{frames_out * 13});
     }
 
-    fn checkSync(self: *RDSFramerBlock) !bool {
-        // Try different bit positions to find valid RDS frame
-        for (0..BlockLen) |offset| {
-            var valid_blocks: u32 = 0;
-
-            // Check each block in the frame
-            for (0..4) |block_idx| {
-                const start = offset + block_idx * BlockLen;
-                if (start + BlockLen <= self.bit_buffer_len) {
-                    const block = self.bit_buffer[start .. start + BlockLen];
-                    if (self.validateBlock(block)) {
-                        valid_blocks += 1;
-                    }
-                }
-            }
-
-            // If we have at least 3 valid blocks, we're likely synchronized
-            if (valid_blocks >= 3) {
-                // Shift buffer to align with frame start
-                if (offset > 0) {
-                    std.mem.copyForwards(u1, self.bit_buffer[0..], self.bit_buffer[offset..self.bit_buffer_len]);
-                    self.bit_buffer_len -= offset;
-                }
-                return true;
-            }
-        }
-        return false;
-    }
-
-    fn validateBlock(self: *RDSFramerBlock, block_bits: []const u1) bool {
-        _ = self;
-        if (block_bits.len != BlockLen) return false;
-
-        // Simple validation: check if block has reasonable bit patterns
-        // In real implementation, would check CRC/syndrome
-        var ones: u32 = 0;
-        for (block_bits) |bit| {
-            ones += bit;
-        }
-
-        // Blocks shouldn't be all ones or all zeros
-        return ones > 5 and ones < 21;
-    }
-
-    fn validateFrame(self: *RDSFramerBlock, frame: []const u1) bool {
-        if (frame.len != FrameLen) return false;
-
-        // Check each block
+    /// Count how many of the 4 RDS blocks in `frame` have valid BCH syndromes.
+    /// Block C accepts either the C or C' offset word (version A vs version B).
+    fn countValidBlocks(frame: []const u1) u32 {
+        var count: u32 = 0;
+        const offsets = [4]OffsetWord{ .A, .B, .C, .D };
         for (0..4) |i| {
             const start = i * BlockLen;
             const block = frame[start .. start + BlockLen];
-            if (!self.validateBlock(block)) {
-                return false;
+            if (i == 2) {
+                if (validateBlock(block, .C) or validateBlock(block, .Cp)) count += 1;
+            } else {
+                if (validateBlock(block, offsets[i])) count += 1;
             }
         }
-        return true;
+        return count;
+    }
+
+    /// Compute the 10-bit BCH syndrome for a 26-bit block.
+    /// RDS uses G(x) = x^10 + x^8 + x^7 + x^5 + x^4 + x^3 + 1 (feedback = 0x1B9).
+    fn computeSyndrome(block_bits: []const u1) u10 {
+        const poly: u10 = 0x1B9;
+        var reg: u10 = 0;
+        for (block_bits[0..BlockLen]) |bit| {
+            const feedback: u1 = @truncate(reg >> 9);
+            reg = ((reg << 1) | @as(u10, bit)) & 0x3FF;
+            if (feedback != 0) reg ^= poly;
+        }
+        return reg;
+    }
+
+    fn validateBlock(block_bits: []const u1, expected_offset: OffsetWord) bool {
+        if (block_bits.len < BlockLen) return false;
+        return computeSyndrome(block_bits[0..BlockLen]) == @intFromEnum(expected_offset);
     }
 };
 
@@ -710,9 +665,10 @@ test "RDS" {
     var iq_file = try std.fs.cwd().openFile("test/rds/SDRSharp_20150804_204012Z_0Hz_IQ.wav", .{ .mode = .read_only });
     defer iq_file.close();
 
-    const reader = iq_file.reader();
+    var read_buf: [4096]u8 = undefined;
+    var reader = iq_file.reader(&read_buf);
 
-    var iq = radio.blocks.IQStreamSource.init(reader.any(), .s16le, 192_000, .{});
+    var iq = radio.blocks.IQStreamSource.init(&reader.interface, .s16le, 192_000, .{});
     var tuner = radio.blocks.TunerBlock.init(0, 1_200_000, 2);
     var rds = try RDS.init(tst.allocator, .{ .frequency = 81e6 });
     // var rds = try RDSSignalBlock.init(tst.allocator);
@@ -728,7 +684,7 @@ test "RDS" {
     try fg.start();
 
     // Run for a short time to test
-    std.time.sleep(100 * std.time.ns_per_ms);
+    std.Thread.sleep(100 * std.time.ns_per_ms);
 
     _ = try fg.stop();
 }
