@@ -11,4 +11,4 @@ media/
 log.txt
 *.log
 *.o
-.devbox
+.devbox.claude/
