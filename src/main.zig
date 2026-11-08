@@ -1,9 +1,10 @@
 const std = @import("std");
-const builtins = @import("builtin");
 const Array = std.ArrayList;
 const Allocator = std.mem.Allocator;
 const tst = std.testing;
 const math = std.math;
+const builtins = @import("builtin");
+
 const vaxis = @import("vaxis");
 const vxfw = vaxis.vxfw;
 
@@ -11,10 +12,11 @@ const radio = @import("radio.zig");
 const RadioBand = radio.Band;
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-
-    const allocator = gpa.allocator();
+    const gpa = std.heap.PageAllocator{};
+    // defer _ = gpa.deinit();
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const allocator = arena.allocator();
 
     var app = try vxfw.App.init(allocator);
     defer app.deinit();
