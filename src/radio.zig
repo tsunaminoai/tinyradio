@@ -1,15 +1,19 @@
 const std = @import("std");
+const Io = std.Io;
 const Array = std.ArrayList;
 const Allocator = std.mem.Allocator;
 const tst = std.testing;
 const math = std.math;
-const radio = @import("radio");
-const rds = @import("rds.zig");
-const b = @import("blocks.zig");
-const e = @import("effects.zig");
 const print = std.debug.print;
 
+const radio = @import("radio");
+
+const b = @import("blocks.zig");
+const e = @import("effects.zig");
+const rds = @import("rds.zig");
+
 pub const RadioReceiver = struct {
+    io: Io,
     allocator: std.mem.Allocator,
     flowgraph: radio.Flowgraph,
     source: radio.blocks.RtlSdrSource,
@@ -36,16 +40,17 @@ pub const RadioReceiver = struct {
 
     const tune_offset = -0e3;
 
-    pub fn init(allocator: std.mem.Allocator, debug: bool) !RadioReceiver {
+    pub fn init(io: Io, allocator: std.mem.Allocator, debug: bool) !RadioReceiver {
         var r = RadioReceiver{
+            .io = io,
             .allocator = allocator,
             .debug = debug,
-            .flowgraph = radio.Flowgraph.init(allocator, .{ .debug = debug }),
+            .flowgraph = radio.Flowgraph.init(allocator, io, .{ .debug = debug }),
             .source = undefined,
             .rds = undefined,
             .fft_sink = try .init(allocator, 32_000),
-            .effect = try .init(allocator, 32_000),
-            .effect2 = try .init(allocator, 32_000),
+            .effect = try .init(io, allocator, 32_000),
+            .effect2 = try .init(io, allocator, 32_000),
             .sink = radio.blocks.PulseAudioSink(2).init(),
             .data_sink = .init(),
             .tuner = radio.blocks.TunerBlock.init(tune_offset, 200e3, 4),
@@ -105,7 +110,7 @@ pub const RadioReceiver = struct {
             _ = try self.flowgraph.stop();
             wasRunning = true;
             self.flowgraph.deinit();
-            self.flowgraph = .init(self.allocator, .{ .debug = self.debug });
+            self.flowgraph = .init(self.allocator, self.io, .{ .debug = self.debug });
         }
         try self.setupRTL(band);
 
@@ -188,7 +193,7 @@ pub const RadioReceiver = struct {
 };
 
 test {
-    var r = try RadioReceiver.init(tst.allocator, true);
+    var r = try RadioReceiver.init(tst.io, tst.allocator, true);
     defer r.deinit();
 
     try r.connect(.FM);

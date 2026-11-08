@@ -3,6 +3,7 @@ const Array = std.ArrayList;
 const Allocator = std.mem.Allocator;
 const tst = std.testing;
 const math = std.math;
+const Io = std.Io;
 const builtins = @import("builtin");
 
 const vaxis = @import("vaxis");
@@ -11,21 +12,25 @@ const vxfw = vaxis.vxfw;
 const radio = @import("radio.zig");
 const RadioBand = radio.Band;
 
-pub fn main() !void {
-    const gpa = std.heap.PageAllocator{};
-    // defer _ = gpa.deinit();
+pub fn main(init: std.process.Init) !void {
+    var safe: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{});
+    const gpa = safe.allocator();
+    defer _ = safe.deinit();
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var app = try vxfw.App.init(allocator);
+    const io = init.io;
+
+    var buf: [1024]u8 = undefined;
+    var app = try vxfw.App.init(io, allocator, init.environ_map, &buf);
     defer app.deinit();
 
     // Create and initialize the radio tuner
     const tui = try allocator.create(RadioTuner);
     defer allocator.destroy(tui);
 
-    tui.* = RadioTuner.init(allocator) catch |e| {
+    tui.* = RadioTuner.init(io, allocator) catch |e| {
         std.debug.print("error: {}\n", .{e});
         return;
     };
@@ -45,6 +50,7 @@ const RadioPreset = struct {
 
 // Main application state
 const RadioTuner = struct {
+    io: Io,
     current_band: RadioBand,
     frequency: f32,
     volume: u8,
@@ -74,14 +80,15 @@ const RadioTuner = struct {
 
     const Self = @This();
 
-    pub fn init(alloc: Allocator) !Self {
+    pub fn init(io: Io, alloc: Allocator) !Self {
         const r = try alloc.create(radio.RadioReceiver);
         errdefer alloc.destroy(r);
-        r.* = try .init(alloc, false);
-        r.* = try .init(alloc, false);
+        r.* = try .init(io, alloc, false);
+        r.* = try .init(io, alloc, false);
         errdefer r.deinit();
 
         const tui = Self{
+            .io = io,
             .allocator = alloc,
             .receiver = r,
             .current_band = .FM_Stereo,
@@ -248,7 +255,7 @@ const RadioTuner = struct {
         }
 
         // Create children surfaces
-        var children = std.ArrayList(vxfw.SubSurface){};
+        var children: std.ArrayList(vxfw.SubSurface) = .empty;
 
         // title row
         const titleRow = vxfw.FlexRow{

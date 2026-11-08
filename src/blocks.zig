@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const Array = std.ArrayList;
 const Allocator = std.mem.Allocator;
 const tst = std.testing;
@@ -6,6 +7,7 @@ const math = std.math;
 const print = std.debug.print;
 
 const radio = @import("radio");
+
 /// Hilbert Transform Block - converts real signal to complex analytic signal
 ///
 /// This block implements a 90-degree phase shift filter to create the imaginary
@@ -273,7 +275,7 @@ pub fn SamplerBlock(comptime T: type) type {
             return .{
                 .block = radio.Block.init(Self),
                 .last_clock = 0,
-                .data_buffer = std.ArrayList(T){},
+                .data_buffer = .empty,
                 .allocator = allocator,
             };
         }
@@ -667,13 +669,14 @@ pub const AwgnNoiseBlock = struct {
 
     const Self = @This();
 
-    pub fn init(allocator: std.mem.Allocator, sample_rate: f32) !Self {
+    pub fn init(io: Io, allocator: std.mem.Allocator, sample_rate: f32) !Self {
         _ = allocator; // Not needed
 
         const initial_snr: f32 = 20.0; // Default 20dB SNR
+        const stamp = Io.Timestamp.now(io, .real);
 
         return Self{
-            .prng = std.Random.DefaultPrng.init(@as(u64, @intCast(std.time.timestamp()))),
+            .prng = std.Random.DefaultPrng.init(@as(u64, @intCast(stamp.toNanoseconds()))),
             .signal_power = 1.0,
             .noise_variance = math.pow(f32, 10.0, -initial_snr / 10.0),
             .snr_db = initial_snr,

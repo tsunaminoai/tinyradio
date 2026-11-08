@@ -1,8 +1,11 @@
 const std = @import("std");
-const radio = @import("radio");
+const Io = std.Io;
 const math = std.math;
-const b = @import("blocks.zig");
 const print = std.debug.print;
+
+const radio = @import("radio");
+
+const b = @import("blocks.zig");
 
 /// Tape Simulator Composite Block for ZigRadio
 /// Simulates vintage tape recorder characteristics including:
@@ -26,13 +29,13 @@ pub const TapeSimulator = struct {
 
     const Self = @This();
 
-    pub fn init(allocator: std.mem.Allocator, sample_rate: f32) !Self {
+    pub fn init(io: Io, allocator: std.mem.Allocator, sample_rate: f32) !Self {
         return Self{
             .block = radio.Block.init(Self),
             .frequency_rolloff = try b.FrequencyRolloffBlock.init(allocator, sample_rate),
             .dynamic_compressor = try b.DynamicCompressorBlock.init(allocator, sample_rate),
             .wow_flutter = try b.WowFlutterBlock.init(allocator, sample_rate),
-            .awgn_noise = try b.AwgnNoiseBlock.init(allocator, sample_rate),
+            .awgn_noise = try b.AwgnNoiseBlock.init(io, allocator, sample_rate),
             .allocator = allocator,
             .sample_rate = sample_rate,
             .initialized = true,

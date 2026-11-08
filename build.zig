@@ -14,6 +14,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
     exe_mod.addImport("radio", radio.module("radio"));
     exe_mod.addImport("vaxis", vaxis.module("vaxis"));
@@ -24,14 +25,12 @@ pub fn build(b: *std.Build) void {
 
         .root_module = exe_mod,
     });
-    // exe.linkLibC();
+
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
+    run_cmd.addPassthruArgs();
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
@@ -42,10 +41,7 @@ pub fn build(b: *std.Build) void {
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-        run_exe_unit_tests.addArgs(args);
-    }
+    run_exe_unit_tests.addPassthruArgs();
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_exe_unit_tests.step);
 }

@@ -1,15 +1,14 @@
 {
   "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.13.6/.schema/devbox.schema.json",
   "packages": {
-    "zls":     "0.16.0",
+    "zls":     "0.17.0",
 
     "git":     "latest",
     "librtlsdr":       "latest",
-  
 
     "watchexec": "latest",
    
-    "zig":     "0.16.0",
+    "zig":     "0.17.0",
    
     "pulseaudio": "latest"
   },
