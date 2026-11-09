@@ -28,7 +28,7 @@
 
     // Tracks the earliest Zig version that the package considers to be a
     // supported use case.
-    .minimum_zig_version = "0.14.1",
+    .minimum_zig_version = "0.17.1",
 
     // This field is optional.
     // Each dependency must either provide a `url` and `hash`, or a `path`.
@@ -37,13 +37,18 @@
     // internet connectivity.
     .dependencies = .{
         .radio = .{
-            .url = "https://github.com/vsergeev/zigradio/archive/refs/tags/v0.11.0.zip",
-            .hash = "radio-0.11.0-6HoyhDnyDwBcAJBFsc75HJkiyP7d6ZDoeOpEQ-NxcS2r",
+            .url = "git+https://github.com/vsergeev/zigradio#3503f67d4acbec61e1f0d3546e43dc1df9304ff8",
+            .hash = "radio-0.12.0-6HoyhG7vDwDkoB7gkFir44ocEv7IcEMWD0uK_--L6W0L",
         },
 
         .vaxis = .{
-            .url = "git+https://github.com/rockorager/libvaxis.git#5b0c724e6434de3a259e790e94954d110688ce5f",
-            .hash = "vaxis-0.6.0-BWNV_FcJDQAY-hi2JHq9u7MWVRxQOg0S7V0YBnvfHtmf",
+            .url = "git+https://github.com/rockorager/libvaxis#74b7d916c8879e5379f428ea8c4d43d1a1bb061b",
+            .hash = "vaxis-0.6.0-BWNV_J2zDQArkPcsc2nkktgxfg2r0u1AwwQP9WLugo_1",
+        },
+        // Vendored from zig-gamedev/ztracy@a08122d with build.zig's
+        // std.meta.fields call changed to @typeInfo (removed in Zig 0.17).
+        .ztracy = .{
+            .path = "vendor/ztracy",
         },
     },
     .paths = .{
