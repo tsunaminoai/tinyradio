@@ -8,6 +8,7 @@
 const std = @import("std");
 const radio = @import("radio");
 const LowpassFIRBlock = @import("decimating_fir.zig").LowpassFIRBlock;
+const BandpassFIRBlock = @import("decimating_fir.zig").BandpassFIRBlock;
 
 const Complex = std.math.Complex(f32);
 
@@ -22,7 +23,7 @@ pub const WBFMStereoDemodulatorBlock = struct {
     fm_demod: radio.blocks.FrequencyDiscriminatorBlock,
     real_to_complex: radio.blocks.RealToComplexBlock,
     delay: radio.blocks.DelayBlock(Complex),
-    pilot_filter: radio.blocks.ComplexBandpassFilterBlock(129),
+    pilot_filter: BandpassFIRBlock(129),
     pilot_pll: radio.blocks.ComplexPLLBlock,
     mixer: radio.blocks.MultiplyConjugateBlock,
     lpr_filter: LowpassFIRBlock(128, 1),
@@ -40,7 +41,7 @@ pub const WBFMStereoDemodulatorBlock = struct {
             .fm_demod = radio.blocks.FrequencyDiscriminatorBlock.init(options.deviation),
             .real_to_complex = radio.blocks.RealToComplexBlock.init(),
             .delay = radio.blocks.DelayBlock(Complex).init(129),
-            .pilot_filter = radio.blocks.ComplexBandpassFilterBlock(129).init(.{ 18e3, 20e3 }, .{}),
+            .pilot_filter = BandpassFIRBlock(129).init(.{ 18e3, 20e3 }),
             .pilot_pll = radio.blocks.ComplexPLLBlock.init(500, .{ 19e3 - 100, 19e3 + 100 }, .{ .multiplier = 2 }),
             .mixer = radio.blocks.MultiplyConjugateBlock.init(),
             // L+R

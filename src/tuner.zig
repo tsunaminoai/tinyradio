@@ -17,7 +17,7 @@ const DecimatingFIR = @import("decimating_fir.zig").DecimatingFIR;
 pub fn TunerBlock(comptime taps: usize, comptime D: usize) type {
     return struct {
         const Self = @This();
-        const Fir = DecimatingFIR(taps, D);
+        const Fir = DecimatingFIR(taps, D, f32);
 
         block: radio.Block,
         /// Frequency shift applied before filtering, in Hz.
