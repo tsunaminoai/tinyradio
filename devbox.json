@@ -9,7 +9,7 @@
 
     "watchexec": "latest",
    
-    "zig":     "latest",
+    "zig":     "0.17.1",
    
     "pulseaudio": "latest"
   },

@@ -8,6 +8,7 @@ const radio = @import("radio");
 
 pub const RadioReceiver = struct {
     allocator: std.mem.Allocator,
+    io: std.Io,
     flowgraph: radio.Flowgraph,
     source: radio.blocks.RtlSdrSource,
     sink: radio.blocks.PulseAudioSink(2),
@@ -27,11 +28,12 @@ pub const RadioReceiver = struct {
 
     const tune_offset = -0e3;
 
-    pub fn init(allocator: std.mem.Allocator, debug: bool) !RadioReceiver {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, debug: bool) !RadioReceiver {
         const r = RadioReceiver{
             .allocator = allocator,
+            .io = io,
             .debug = debug,
-            .flowgraph = radio.Flowgraph.init(allocator, .{ .debug = debug }),
+            .flowgraph = radio.Flowgraph.init(allocator, io, .{ .debug = debug }),
             .source = undefined,
             .sink = radio.blocks.PulseAudioSink(2).init(),
             .tuner = radio.blocks.TunerBlock.init(tune_offset, 200e3, 4),
@@ -87,7 +89,7 @@ pub const RadioReceiver = struct {
             _ = try self.flowgraph.stop();
             wasRunning = true;
             self.flowgraph.deinit();
-            self.flowgraph = .init(self.allocator, .{ .debug = self.debug });
+            self.flowgraph = .init(self.allocator, self.io, .{ .debug = self.debug });
         }
         try self.setupRTL(band);
 

@@ -11,20 +11,21 @@ const vxfw = vaxis.vxfw;
 const radio = @import("radio.zig");
 const RadioBand = radio.Band;
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+pub fn main(init: std.process.Init) !void {
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
 
     const allocator = gpa.allocator();
 
-    var app = try vxfw.App.init(allocator);
+    var tty_buf: [4096]u8 = undefined;
+    var app = try vxfw.App.init(init.io, allocator, init.environ_map, &tty_buf);
     defer app.deinit();
 
     // Create and initialize the radio tuner
     const tui = try allocator.create(RadioTuner);
     defer allocator.destroy(tui);
 
-    tui.* = RadioTuner.init(allocator) catch |e| {
+    tui.* = RadioTuner.init(init.io, allocator) catch |e| {
         std.debug.print("error: {}\n", .{e});
         return;
     };
@@ -72,10 +73,10 @@ const RadioTuner = struct {
 
     const Self = @This();
 
-    pub fn init(alloc: Allocator) !Self {
+    pub fn init(io: std.Io, alloc: Allocator) !Self {
         const r = try alloc.create(radio.RadioReceiver);
         errdefer alloc.destroy(r);
-        r.* = try .init(alloc, false);
+        r.* = try .init(alloc, io, false);
         errdefer r.deinit();
 
         const tui = Self{
@@ -238,7 +239,7 @@ const RadioTuner = struct {
         }
 
         // Create children surfaces
-        var children = std.ArrayList(vxfw.SubSurface){};
+        var children = std.ArrayList(vxfw.SubSurface).empty;
 
         // title row
         const titleRow = vxfw.FlexRow{
