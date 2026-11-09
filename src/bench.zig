@@ -11,6 +11,7 @@ const std = @import("std");
 const radio = @import("radio");
 const ztracy = @import("ztracy");
 const TunerBlock = @import("tuner.zig").TunerBlock;
+const WBFMStereoDemodulatorBlock = @import("stereo.zig").WBFMStereoDemodulatorBlock;
 
 const Complex = std.math.Complex(f32);
 
@@ -81,7 +82,7 @@ const Stage = enum {
 
 /// Run one pass of `total` samples through `tuner`, and through the FM stereo
 /// demodulator too when `stage` is `.full`.
-fn runChain(comptime TunerT: type, tuner: *TunerT, comptime stage: Stage, allocator: std.mem.Allocator, io: std.Io, total: usize) !void {
+fn runChain(comptime TunerT: type, tuner: *TunerT, comptime DemodT: type, comptime stage: Stage, allocator: std.mem.Allocator, io: std.Io, total: usize) !void {
     const zone = ztracy.ZoneN(@src(), "chain run");
     defer zone.End();
 
@@ -97,7 +98,7 @@ fn runChain(comptime TunerT: type, tuner: *TunerT, comptime stage: Stage, alloca
             try fg.connectPort(&tuner.block, "out1", &sink.block, "in1");
         },
         .full => {
-            var demod = radio.blocks.WBFMStereoDemodulatorBlock.init(.{});
+            var demod = DemodT.init(.{});
             var left = Discard(f32).init();
             var right = Discard(f32).init();
             try fg.connectPort(&tuner.block, "out1", &demod.block, "in1");
@@ -109,14 +110,14 @@ fn runChain(comptime TunerT: type, tuner: *TunerT, comptime stage: Stage, alloca
 }
 
 /// Median wall time in nanoseconds of `timed_runs` passes over `total` samples.
-fn benchTuner(comptime TunerT: type, tuner: *TunerT, comptime stage: Stage, allocator: std.mem.Allocator, io: std.Io, total: usize) !i96 {
+fn benchTuner(comptime TunerT: type, tuner: *TunerT, comptime DemodT: type, comptime stage: Stage, allocator: std.mem.Allocator, io: std.Io, total: usize) !i96 {
     var i: usize = 0;
-    while (i < warmup_runs) : (i += 1) try runChain(TunerT, tuner, stage, allocator, io, total);
+    while (i < warmup_runs) : (i += 1) try runChain(TunerT, tuner, DemodT, stage, allocator, io, total);
 
     var times: [timed_runs]i96 = undefined;
     for (&times) |*t| {
         const start = std.Io.Clock.awake.now(io);
-        try runChain(TunerT, tuner, stage, allocator, io, total);
+        try runChain(TunerT, tuner, DemodT, stage, allocator, io, total);
         const end = std.Io.Clock.awake.now(io);
         t.* = std.Io.Timestamp.durationTo(start, end).toNanoseconds();
         ztracy.FrameMark();
@@ -134,15 +135,15 @@ pub fn main(init: std.process.Init) !void {
 
     // Baseline: zigradio's lowpass + downsampler tuner.
     var baseline = radio.blocks.TunerBlock.init(0, 200e3, 4);
-    const base_tuner = try benchTuner(radio.blocks.TunerBlock, &baseline, .tuner, allocator, io, total);
+    const base_tuner = try benchTuner(radio.blocks.TunerBlock, &baseline, radio.blocks.WBFMStereoDemodulatorBlock, .tuner, allocator, io, total);
     var baseline_full = radio.blocks.TunerBlock.init(0, 200e3, 4);
-    const base_full = try benchTuner(radio.blocks.TunerBlock, &baseline_full, .full, allocator, io, total);
+    const base_full = try benchTuner(radio.blocks.TunerBlock, &baseline_full, radio.blocks.WBFMStereoDemodulatorBlock, .full, allocator, io, total);
 
     // Ours: decimating FIR, 64 taps, keep every 4th sample.
     var ours = TunerBlock(64, 4).init(0, 200e3);
-    const ours_tuner = try benchTuner(TunerBlock(64, 4), &ours, .tuner, allocator, io, total);
+    const ours_tuner = try benchTuner(TunerBlock(64, 4), &ours, WBFMStereoDemodulatorBlock, .tuner, allocator, io, total);
     var ours_full = TunerBlock(64, 4).init(0, 200e3);
-    const ours_full_ns = try benchTuner(TunerBlock(64, 4), &ours_full, .full, allocator, io, total);
+    const ours_full_ns = try benchTuner(TunerBlock(64, 4), &ours_full, WBFMStereoDemodulatorBlock, .full, allocator, io, total);
 
     report("tuner: zigradio", base_tuner, audio_ns);
     report("tuner: decimating FIR", ours_tuner, audio_ns);

@@ -6,10 +6,12 @@ const math = std.math;
 
 const radio = @import("radio");
 const TunerBlock = @import("tuner.zig").TunerBlock;
+const WBFMStereoDemodulatorBlock = @import("stereo.zig").WBFMStereoDemodulatorBlock;
 
 test {
     _ = @import("tuner.zig");
     _ = @import("decimating_fir.zig");
+    _ = @import("stereo.zig");
 }
 
 pub const RadioReceiver = struct {
@@ -28,7 +30,7 @@ pub const RadioReceiver = struct {
 
     // demodulators
     fm: radio.blocks.WBFMMonoDemodulatorBlock,
-    fm_stereo: radio.blocks.WBFMStereoDemodulatorBlock,
+    fm_stereo: WBFMStereoDemodulatorBlock,
     am: radio.blocks.AMEnvelopeDemodulatorBlock,
     debug: bool = false,
 

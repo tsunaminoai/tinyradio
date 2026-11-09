@@ -11,6 +11,7 @@
 //! vectors, so the padding adds no contribution.
 
 const std = @import("std");
+const radio = @import("radio");
 const Complex = std.math.Complex(f32);
 
 pub const Lanes = 8;
@@ -96,6 +97,43 @@ pub fn DecimatingFIR(comptime N: usize, comptime D: usize) type {
                 acc += w * self.taps[c];
             }
             return @reduce(.Add, acc);
+        }
+    };
+}
+
+/// Flowgraph block for a complex lowpass with `N` taps and decimation `D`.
+/// Taps are designed in `initialize` from the input rate, using the same
+/// Hamming-windowed sinc as zigradio's LowpassFilterBlock.
+/// Ports: in1 (Complex(f32)) -> out1 (Complex(f32)).
+pub fn LowpassFIRBlock(comptime N: usize, comptime D: usize) type {
+    return struct {
+        const Self = @This();
+
+        block: radio.Block,
+        /// Lowpass cutoff in Hz.
+        cutoff: f32,
+        input_rate: f64 = 0,
+        fir: DecimatingFIR(N, D) = .{},
+
+        pub fn init(cutoff: f32) Self {
+            return .{ .block = radio.Block.init(@This()), .cutoff = cutoff };
+        }
+
+        pub fn setRate(self: *Self, upstream_rate: f64) !f64 {
+            self.input_rate = upstream_rate;
+            return upstream_rate / @as(f64, D);
+        }
+
+        pub fn initialize(self: *Self, _: std.mem.Allocator, _: std.Io) !void {
+            const nyquist: f32 = @floatCast(self.input_rate / 2);
+            const h = radio.utils.filter.firwinLowpass(N, self.cutoff / nyquist, .Hamming);
+            self.fir.setTaps(&h);
+            self.fir.reset();
+        }
+
+        pub fn process(self: *Self, x: []const Complex, z: []Complex) !radio.ProcessResult {
+            const produced = self.fir.process(x, z);
+            return radio.ProcessResult.init(&[1]usize{x.len}, &[1]usize{produced});
         }
     };
 }
@@ -202,4 +240,36 @@ test "DecimatingFIR is independent of how the input is split into chunks" {
     try std.testing.expectEqual(@as(usize, 600), pos);
 
     try expectClose(whole[0..whole_len], chunked[0..chunked_len], 1e-5);
+}
+
+test "LowpassFIRBlock matches zigradio's LowpassFilterBlock" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+    const rate: f64 = 300e3;
+    const cutoff: f32 = 15e3;
+
+    var reference = radio.blocks.LowpassFilterBlock(Complex, 128).init(cutoff, .{});
+    _ = try reference.block.setRate(rate);
+    try reference.initialize(alloc, io);
+    defer reference.deinitialize(alloc, io);
+
+    var ours = LowpassFIRBlock(128, 1).init(cutoff);
+    _ = try ours.block.setRate(rate);
+    try ours.initialize(alloc, io);
+
+    var prng = std.Random.DefaultPrng.init(3);
+    const random = prng.random();
+    var x: [3000]Complex = undefined;
+    for (&x) |*s| s.* = .{ .re = random.float(f32) - 0.5, .im = random.float(f32) - 0.5 };
+
+    var expected: [3000]Complex = undefined;
+    const exp = try reference.process(&x, &expected);
+    var actual: [3000]Complex = undefined;
+    const got = try ours.process(&x, &actual);
+
+    try std.testing.expectEqual(exp.samples_produced[0], got.samples_produced[0]);
+    for (expected[0..exp.samples_produced[0]], actual[0..got.samples_produced[0]]) |e, a| {
+        try std.testing.expectApproxEqAbs(e.re, a.re, 1e-4);
+        try std.testing.expectApproxEqAbs(e.im, a.im, 1e-4);
+    }
 }
