@@ -69,7 +69,7 @@ pub const RadioReceiver = struct {
             .fm = .init(.{}),
             .fm_stereo = .init(.{}),
             .am = .init(.{}),
-            .power_meter = .init(50, .{}),
+            .power_meter = .init(50, .{ .power_tau = 0.05 }),
             .spectrum = Spectrum.init(),
             .effect = try .init(allocator, 32_000),
             .effect2 = try .init(allocator, 32_000),
