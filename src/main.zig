@@ -1,9 +1,10 @@
 const std = @import("std");
-const builtins = @import("builtin");
 const Array = std.ArrayList;
 const Allocator = std.mem.Allocator;
 const tst = std.testing;
 const math = std.math;
+const builtins = @import("builtin");
+
 const vaxis = @import("vaxis");
 const vxfw = vaxis.vxfw;
 
@@ -131,7 +132,9 @@ const RadioTuner = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        self.receiver.stop() catch unreachable;
+        self.receiver.stop() catch |err| {
+        std.debug.print("receiver.stop() failed: {s}\n", .{ @errorName(err) });
+    } ;
         self.receiver.deinit();
         self.allocator.destroy(self.receiver);
     }
