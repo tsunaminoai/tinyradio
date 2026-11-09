@@ -5,6 +5,12 @@ const tst = std.testing;
 const math = std.math;
 
 const radio = @import("radio");
+const TunerBlock = @import("tuner.zig").TunerBlock;
+
+test {
+    _ = @import("tuner.zig");
+    _ = @import("decimating_fir.zig");
+}
 
 pub const RadioReceiver = struct {
     allocator: std.mem.Allocator,
@@ -14,7 +20,7 @@ pub const RadioReceiver = struct {
     sink: radio.blocks.PulseAudioSink(2),
 
     // base nodes
-    tuner: radio.blocks.TunerBlock,
+    tuner: TunerBlock(64, 4),
     af_gain_left: GainBlock,
     af_gain_right: GainBlock,
     power_meter: radio.blocks.PowerMeterBlock(f32),
@@ -36,7 +42,7 @@ pub const RadioReceiver = struct {
             .flowgraph = radio.Flowgraph.init(allocator, io, .{ .debug = debug }),
             .source = undefined,
             .sink = radio.blocks.PulseAudioSink(2).init(),
-            .tuner = radio.blocks.TunerBlock.init(tune_offset, 200e3, 4),
+            .tuner = .init(tune_offset, 200e3),
             .af_gain_left = GainBlock.init(0.3),
             .af_gain_right = GainBlock.init(0.3),
             .fm = .init(.{}),
