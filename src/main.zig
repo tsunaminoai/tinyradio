@@ -251,6 +251,10 @@ const RadioTuner = struct {
                 } else if (key.matches('m', .{})) {
                     self.toggleMute();
                     return ctx.consumeAndRedraw();
+                } else if (key.matches('e', .{})) {
+                    self.receiver.toggleEffects();
+                    self.status_text = "Effects toggled";
+                    return ctx.consumeAndRedraw();
                 } else if (key.matches('+', .{}) or key.matches(vaxis.Key.right, .{})) {
                     self.adjustVolume(true);
                     return ctx.consumeAndRedraw();
@@ -384,7 +388,7 @@ const RadioTuner = struct {
         writeText(root, 60, size.height -| 3, vol, .{ .fg = Palette.amber, .bg = Palette.glass, .bold = true });
 
         // Help line, dimmed.
-        const help_text = "↑/↓ tune   B band   M mute   +/- volume   1-6 presets   Q quit";
+        const help_text = "↑/↓ tune   B band   M mute   E fx   +/- volume   1-6 presets   Q quit";
         writeText(root, 2, size.height -| 1, help_text, .{ .fg = Palette.amber_dim, .bg = Palette.glass });
 
         root.children = try children.toOwnedSlice(arena);

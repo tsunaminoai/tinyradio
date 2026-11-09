@@ -8,6 +8,8 @@ const radio = @import("radio");
 const TunerBlock = @import("tuner.zig").TunerBlock;
 const WBFMStereoDemodulatorBlock = @import("stereo.zig").WBFMStereoDemodulatorBlock;
 const Spectrum = @import("spectrum.zig").Spectrum;
+const rds = @import("rds.zig");
+const e = @import("effects.zig");
 const Complex = std.math.Complex(f32);
 
 test {
@@ -15,6 +17,8 @@ test {
     _ = @import("decimating_fir.zig");
     _ = @import("stereo.zig");
     _ = @import("spectrum.zig");
+    _ = @import("rds.zig");
+    _ = @import("effects.zig");
 }
 
 pub const RadioReceiver = struct {
@@ -23,6 +27,7 @@ pub const RadioReceiver = struct {
     flowgraph: radio.Flowgraph,
     source: radio.blocks.RtlSdrSource,
     sink: radio.blocks.PulseAudioSink(2),
+    data_sink: radio.blocks.PrintSink(rds.RDSDecoderBlock.RDSData),
 
     // base nodes
     tuner: TunerBlock(64, 4),
@@ -33,12 +38,19 @@ pub const RadioReceiver = struct {
     /// FFT of the tuner output, read by the UI.
     spectrum: Spectrum,
     agc: radio.blocks.AGCBlock(f32),
+    /// Tape-style effect on the mono FM path. Toggled with toggleEffects().
+    effect: e.TapeSimulator,
+    effect2: e.TapeSimulator,
 
     // demodulators
     fm: radio.blocks.WBFMMonoDemodulatorBlock,
     fm_stereo: WBFMStereoDemodulatorBlock,
     am: radio.blocks.AMEnvelopeDemodulatorBlock,
     debug: bool = false,
+
+    // RDS, decoded from the tuner output in stereo FM. Rebuilt on each connect().
+    rds: rds.RDS,
+    rds_initialized: bool = false,
 
     const tune_offset = -0e3;
 
@@ -50,6 +62,7 @@ pub const RadioReceiver = struct {
             .flowgraph = radio.Flowgraph.init(allocator, io, .{ .debug = debug }),
             .source = undefined,
             .sink = radio.blocks.PulseAudioSink(2).init(),
+            .data_sink = .init(),
             .tuner = .init(tune_offset, 200e3),
             .af_gain_left = GainBlock.init(0.3),
             .af_gain_right = GainBlock.init(0.3),
@@ -58,6 +71,9 @@ pub const RadioReceiver = struct {
             .am = .init(.{}),
             .power_meter = .init(50, .{}),
             .spectrum = Spectrum.init(),
+            .effect = try .init(allocator, 32_000),
+            .effect2 = try .init(allocator, 32_000),
+            .rds = undefined,
 
             .agc = radio.blocks.AGCBlock(f32).init(.{ .preset = .Fast }, .{}),
         };
@@ -70,10 +86,9 @@ pub const RadioReceiver = struct {
     // its buffer a second time.
     pub fn deinit(self: *RadioReceiver) void {
         self.flowgraph.deinit();
-        // if (self.sink) |sink| sink.deinit();
-        // if (self.fm_demod) |demod| demod.deinit();
-        // if (self.fm_filter) |filter| filter.deinit();
-        // self.context.deinit();
+        if (self.rds_initialized) self.rds.deinit();
+        self.effect.deinit();
+        self.effect2.deinit();
     }
 
     fn setupRTL(self: *RadioReceiver, band: Band) !void {
@@ -94,6 +109,11 @@ pub const RadioReceiver = struct {
                 },
             ),
         };
+        if (self.rds_initialized) self.rds.deinit();
+        self.rds = try .init(self.allocator, .{
+            .frequency = @as(f32, @floatCast(self.source.frequency)),
+        });
+        self.rds_initialized = true;
     }
 
     pub fn connect(self: *RadioReceiver, band: Band) !void {
@@ -115,8 +135,9 @@ pub const RadioReceiver = struct {
         switch (band) {
             .FM => {
                 try self.flowgraph.connectPort(&self.tuner.block, "out1", &self.fm.block, "in1");
-                try self.flowgraph.connectPort(&self.fm.block, "out1", &self.af_gain_left.block, "in1");
-                try self.flowgraph.connectPort(&self.fm.block, "out1", &self.af_gain_right.block, "in1");
+                try self.flowgraph.connectPort(&self.fm.block, "out1", &self.effect.block, "in1");
+                try self.flowgraph.connectPort(&self.effect.block, "out1", &self.af_gain_left.block, "in1");
+                try self.flowgraph.connectPort(&self.effect.block, "out1", &self.af_gain_right.block, "in1");
                 try self.flowgraph.connectPort(&self.af_gain_left.block, "out1", &self.sink.block, "in1");
                 try self.flowgraph.connectPort(&self.af_gain_right.block, "out1", &self.sink.block, "in2");
             },
@@ -129,6 +150,8 @@ pub const RadioReceiver = struct {
             },
             .FM_Stereo => {
                 try self.flowgraph.connectPort(&self.tuner.block, "out1", &self.fm_stereo.block, "in1");
+                try self.flowgraph.connectPort(&self.tuner.block, "out1", &self.rds.block, "in1");
+                try self.flowgraph.connectPort(&self.rds.block, "out1", &self.data_sink.block, "in1");
                 try self.flowgraph.connectPort(&self.fm_stereo.block, "out1", &self.af_gain_left.block, "in1");
                 try self.flowgraph.connectPort(&self.fm_stereo.block, "out2", &self.af_gain_right.block, "in1");
                 try self.flowgraph.connectPort(&self.af_gain_left.block, "out1", &self.sink.block, "in1");
@@ -159,6 +182,17 @@ pub const RadioReceiver = struct {
     }
     pub fn getPower(self: RadioReceiver) f32 {
         return self.power_meter.average_power;
+    }
+
+    /// Latest decoded RDS group data, or null before RDS is set up.
+    pub fn getRDSData(self: *RadioReceiver) ?rds.RDSDecoderBlock.RDSData {
+        if (!self.rds_initialized) return null;
+        return self.rds.decoder.getRDSData();
+    }
+
+    pub fn toggleEffects(self: *RadioReceiver) void {
+        self.effect.enabled = !self.effect.enabled;
+        self.effect2.enabled = !self.effect2.enabled;
     }
 
     /// Channel power in dBFS. Full-scale complex input is 0 dB.

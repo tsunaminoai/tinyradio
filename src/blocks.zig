@@ -273,7 +273,7 @@ pub fn SamplerBlock(comptime T: type) type {
             return .{
                 .block = radio.Block.init(Self),
                 .last_clock = 0,
-                .data_buffer = std.ArrayList(T){},
+                .data_buffer = std.ArrayList(T).empty,
                 .allocator = allocator,
             };
         }
@@ -673,7 +673,8 @@ pub const AwgnNoiseBlock = struct {
         const initial_snr: f32 = 20.0; // Default 20dB SNR
 
         return Self{
-            .prng = std.Random.DefaultPrng.init(@as(u64, @intCast(std.time.timestamp()))),
+            // Fixed seed: noise is reproducible between runs.
+            .prng = std.Random.DefaultPrng.init(0x5eed),
             .signal_power = 1.0,
             .noise_variance = math.pow(f32, 10.0, -initial_snr / 10.0),
             .snr_db = initial_snr,

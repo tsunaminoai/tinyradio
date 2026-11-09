@@ -91,7 +91,7 @@ pub fn RootRaisedCosineFilter(
     return struct {
         block: radio.Block,
         taps: [taps]T = computeRCCTaps(options.rolloff),
-        delay_line: [taps]math.Complex(T) = [_]math.Complex(T){.init(0, 0)} ** taps,
+        delay_line: [taps]math.Complex(T) = std.mem.zeroes([taps]math.Complex(T)),
         index: usize = 0,
 
         fn computeRCCTaps(rolloff: T) [taps]T {
@@ -253,14 +253,14 @@ pub const RDSDecoderBlock = struct {
             .ta = false,
             .ms = false,
             .di = 0,
-            .ps_name = [_]u8{' '} ** 8,
-            .ps_segments = [_][2]u8{[_]u8{' '} ** 2} ** 4,
+            .ps_name = @splat(' '),
+            .ps_segments = @splat(@splat(' ')),
             .ps_segment_flags = 0,
-            .radio_text = [_]u8{' '} ** 64,
-            .rt_segments = [_][4]u8{[_]u8{' '} ** 4} ** 16,
+            .radio_text = @splat(' '),
+            .rt_segments = @splat(@splat(' ')),
             .rt_segment_flags = 0,
             .rt_ab_flag = false,
-            .af_list = [_]u8{0} ** 25,
+            .af_list = @splat(0),
             .af_count = 0,
             .clock_time = .{
                 .hours = 0,
@@ -339,7 +339,7 @@ pub const RDSDecoderBlock = struct {
                 if (text_ab != @intFromBool(self.rt_ab_flag)) {
                     self.rt_ab_flag = text_ab == 1;
                     self.rt_segment_flags = 0;
-                    self.radio_text = [_]u8{' '} ** 64;
+                    self.radio_text = @splat(' ');
                 }
 
                 if (version == 0) {
@@ -551,7 +551,7 @@ pub const RDSDecoderBlock = struct {
 pub const RDSFramerBlock = struct {
     block: radio.Block,
     /// 104-bit shift register: oldest bit at [0], newest at [FrameLen-1].
-    frame: [FrameLen]u1 = [_]u1{0} ** FrameLen,
+    frame: [FrameLen]u1 = @splat(0),
     /// How many bits have been loaded into `frame` (saturates at FrameLen).
     fill: usize = 0,
     synchronized: bool = false,
@@ -659,17 +659,17 @@ pub const RDSFramerBlock = struct {
 };
 
 test "RDS" {
-    var fg = radio.Flowgraph.init(tst.allocator, .{ .debug = true });
+    var fg = radio.Flowgraph.init(tst.allocator, tst.io, .{ .debug = true });
     defer fg.deinit();
 
-    var iq_file = try std.fs.cwd().openFile("test/rds/SDRSharp_20150804_204012Z_0Hz_IQ.wav", .{ .mode = .read_only });
-    defer iq_file.close();
+    var iq_file = try std.Io.Dir.cwd().openFile(tst.io, "test/rds/SDRSharp_20150804_204012Z_0Hz_IQ.wav", .{ .mode = .read_only });
+    defer iq_file.close(tst.io);
 
     var read_buf: [4096]u8 = undefined;
-    var reader = iq_file.reader(&read_buf);
+    var reader = iq_file.reader(tst.io, &read_buf);
 
     var iq = radio.blocks.IQStreamSource.init(&reader.interface, .s16le, 192_000, .{});
-    var tuner = radio.blocks.TunerBlock.init(0, 1_200_000, 2);
+    var tuner = radio.blocks.TunerBlock.init(0, 200e3, 1);
     var rds = try RDS.init(tst.allocator, .{ .frequency = 81e6 });
     // var rds = try RDSSignalBlock.init(tst.allocator);
     defer rds.deinit();
@@ -684,7 +684,7 @@ test "RDS" {
     try fg.start();
 
     // Run for a short time to test
-    std.Thread.sleep(100 * std.time.ns_per_ms);
+    try std.Io.sleep(tst.io, .fromNanoseconds(100 * std.time.ns_per_ms), .awake);
 
     _ = try fg.stop();
 }
