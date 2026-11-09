@@ -37,10 +37,10 @@ pub const RDS = struct {
             .block = .init(RDS, &.{"in1"}, &.{"out1"}),
 
             .signal = try .init(alloc),
-            .bb_filter = .init(128, .{ .nyquist = 4e3 }),
-            .bb_rrc = .init(101, .{}),
+            .bb_filter = .init(4e3, .{}),
+            .bb_rrc = .init(2.4e3, .{}),
             .ck_demod = .init(),
-            .ck_recover = .init(1187.5 * 2, 44_000),
+            .ck_recover = .init(1187.5 * 2, 250_000),
             .sampler = try .init(alloc),
             .bp_corrector = .init(8e3),
             .bit_demod = .init(),
