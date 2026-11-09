@@ -12,9 +12,9 @@ TinyRadio turns your RTL-SDR dongle into an AM/FM radio with a text-based interf
 
 These are included in the devbox shell
 
-- [Zig](https://ziglang.org/download/) (latest version)
+- [Zig](https://ziglang.org/download/) 0.17.1 (pinned in `devbox.json`)
 - RTL-SDR dongle and drivers (`librtlsdr`)
-- PulseAudio (Linux)
+- PulseAudio or PipeWire with its PulseAudio interface (Linux). The app must run in a session where `XDG_RUNTIME_DIR` is set, so it can reach your audio server.
 
 ### Running TinyRadio
 
@@ -29,6 +29,24 @@ devbox run run
 ```bash
 zig build -Doptimize=ReleaseFast run
 ```
+
+### Running tests
+
+```bash
+devbox run test
+```
+
+The tests don't need the dongle. The hardware-dependent radio test is commented out in `src/radio.zig`.
+
+### Profiling
+
+`perf.sh` builds a ReleaseFast binary and records it with `perf`. It needs `sudo` for `perf`'s call graphs. The app itself runs as your user, because PulseAudio rejects root clients. Press **Q** to stop the app, and the report opens when perf finishes. Run it from a terminal, not with output redirected to a file, so `sudo` can prompt for your password.
+
+```bash
+./perf.sh
+```
+
+If the app exits with an error, `perf.sh` skips the report and removes the profile.
 
 ## Controls
 
