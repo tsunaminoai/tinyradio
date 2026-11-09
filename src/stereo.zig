@@ -25,6 +25,8 @@ pub const WBFMStereoDemodulatorBlock = struct {
     delay: radio.blocks.DelayBlock(Complex),
     pilot_filter: BandpassFIRBlock(129),
     pilot_pll: radio.blocks.ComplexPLLBlock,
+    /// Power of the 19 kHz pilot, used for the stereo-lock indicator.
+    pilot_power: radio.blocks.PowerMeterBlock(Complex),
     mixer: radio.blocks.MultiplyConjugateBlock,
     lpr_filter: LowpassFIRBlock(128, 1),
     lpr_am_demod: radio.blocks.ComplexToRealBlock,
@@ -43,6 +45,7 @@ pub const WBFMStereoDemodulatorBlock = struct {
             .delay = radio.blocks.DelayBlock(Complex).init(129),
             .pilot_filter = BandpassFIRBlock(129).init(.{ 18e3, 20e3 }),
             .pilot_pll = radio.blocks.ComplexPLLBlock.init(500, .{ 19e3 - 100, 19e3 + 100 }, .{ .multiplier = 2 }),
+            .pilot_power = .init(50, .{}),
             .mixer = radio.blocks.MultiplyConjugateBlock.init(),
             // L+R
             .lpr_filter = LowpassFIRBlock(128, 1).init(options.af_bandwidth),
@@ -64,6 +67,7 @@ pub const WBFMStereoDemodulatorBlock = struct {
         try flowgraph.connect(&self.real_to_complex.block, &self.pilot_filter.block);
         try flowgraph.connect(&self.real_to_complex.block, &self.delay.block);
         try flowgraph.connect(&self.pilot_filter.block, &self.pilot_pll.block);
+        try flowgraph.connect(&self.pilot_filter.block, &self.pilot_power.block);
         try flowgraph.connectPort(&self.delay.block, "out1", &self.mixer.block, "in1");
         try flowgraph.connectPort(&self.pilot_pll.block, "out1", &self.mixer.block, "in2");
         try flowgraph.connect(&self.delay.block, &self.lpr_filter.block);

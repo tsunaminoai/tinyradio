@@ -7,11 +7,14 @@ const math = std.math;
 const radio = @import("radio");
 const TunerBlock = @import("tuner.zig").TunerBlock;
 const WBFMStereoDemodulatorBlock = @import("stereo.zig").WBFMStereoDemodulatorBlock;
+const Spectrum = @import("spectrum.zig").Spectrum;
+const Complex = std.math.Complex(f32);
 
 test {
     _ = @import("tuner.zig");
     _ = @import("decimating_fir.zig");
     _ = @import("stereo.zig");
+    _ = @import("spectrum.zig");
 }
 
 pub const RadioReceiver = struct {
@@ -25,7 +28,10 @@ pub const RadioReceiver = struct {
     tuner: TunerBlock(64, 4),
     af_gain_left: GainBlock,
     af_gain_right: GainBlock,
-    power_meter: radio.blocks.PowerMeterBlock(f32),
+    /// Power of the tuner output, i.e. the signal in the selected channel.
+    power_meter: radio.blocks.PowerMeterBlock(Complex),
+    /// FFT of the tuner output, read by the UI.
+    spectrum: Spectrum,
     agc: radio.blocks.AGCBlock(f32),
 
     // demodulators
@@ -51,6 +57,7 @@ pub const RadioReceiver = struct {
             .fm_stereo = .init(.{}),
             .am = .init(.{}),
             .power_meter = .init(50, .{}),
+            .spectrum = Spectrum.init(),
 
             .agc = radio.blocks.AGCBlock(f32).init(.{ .preset = .Fast }, .{}),
         };
@@ -103,10 +110,11 @@ pub const RadioReceiver = struct {
 
         // Connect the processing chain
         try self.flowgraph.connect(&self.source.block, &self.tuner.block);
+        try self.flowgraph.connectPort(&self.tuner.block, "out1", &self.power_meter.block, "in1");
+        try self.flowgraph.connectPort(&self.tuner.block, "out1", &self.spectrum.block, "in1");
         switch (band) {
             .FM => {
                 try self.flowgraph.connectPort(&self.tuner.block, "out1", &self.fm.block, "in1");
-                try self.flowgraph.connectPort(&self.fm.block, "out1", &self.power_meter.block, "in1");
                 try self.flowgraph.connectPort(&self.fm.block, "out1", &self.af_gain_left.block, "in1");
                 try self.flowgraph.connectPort(&self.fm.block, "out1", &self.af_gain_right.block, "in1");
                 try self.flowgraph.connectPort(&self.af_gain_left.block, "out1", &self.sink.block, "in1");
@@ -153,6 +161,20 @@ pub const RadioReceiver = struct {
         return self.power_meter.average_power;
     }
 
+    /// Channel power in dBFS. Full-scale complex input is 0 dB.
+    pub fn signalDb(self: *const RadioReceiver) f32 {
+        return powerToDb(self.power_meter.average_power);
+    }
+
+    /// 19 kHz pilot power in dBFS. A strong pilot means the station is in stereo.
+    pub fn pilotDb(self: *const RadioReceiver) f32 {
+        return powerToDb(self.fm_stereo.pilot_power.average_power);
+    }
+
+    fn powerToDb(power: f32) f32 {
+        return 10.0 * math.log10(power + 1e-12);
+    }
+
     pub fn getAudioSamples(self: *RadioReceiver, buffer: []f32) !usize {
         _ = self; // autofix
         _ = buffer; // autofix
@@ -173,37 +195,72 @@ pub const RadioReceiver = struct {
 //     try r.stop();
 // }
 
+/// Audio gain that glides to its target instead of jumping, so mute, unmute,
+/// and volume changes don't click. The target is set from the UI thread and
+/// read by the audio thread, so it is stored atomically.
 pub const GainBlock = struct {
+    /// Time constant of the glide, in seconds. About 99% of a change is
+    /// done after five of these.
+    const glide_seconds = 0.02;
+
     block: radio.Block,
+    /// Current gain, updated once per sample by the audio thread.
     gain: f32,
+    target: std.atomic.Value(u32),
+    /// Per-sample smoothing factor. Set from the sample rate. Until then
+    /// gain jumps straight to the target.
+    alpha: f32 = 1,
     const Self = @This();
 
     pub fn init(initial_gain: f32) GainBlock {
         return .{
             .block = radio.Block.init(Self),
             .gain = initial_gain,
+            .target = .init(@bitCast(initial_gain)),
         };
     }
+
+    /// Set the linear gain to glide to. Safe to call from another thread.
     pub fn setGain(self: *Self, linear_gain: f32) void {
-        self.gain = linear_gain;
+        self.target.store(@bitCast(linear_gain), .monotonic);
     }
 
     pub fn setGainDB(self: *Self, gain_db: f32) void {
-        const linear_gain = std.math.pow(f32, 10.0, gain_db / 20.0);
-        self.gain = linear_gain;
+        self.setGain(std.math.pow(f32, 10.0, gain_db / 20.0));
+    }
+
+    pub fn setRate(self: *Self, upstream_rate: f64) !f64 {
+        self.alpha = 1 - @exp(-1.0 / (glide_seconds * @as(f32, @floatCast(upstream_rate))));
+        return upstream_rate;
     }
 
     // ZigRadio block interface method
 
     pub fn process(self: *Self, input: []const f32, output: []f32) !radio.ProcessResult {
-        var idx: usize = 0;
-        while (idx < input.len) {
-            output[idx] = input[idx] * self.gain;
-            idx += 1;
+        const target: f32 = @bitCast(self.target.load(.monotonic));
+        for (input, output) |x, *y| {
+            self.gain += self.alpha * (target - self.gain);
+            y.* = x * self.gain;
         }
-        return radio.ProcessResult.init(&[1]usize{input.len}, &[1]usize{idx});
+        return radio.ProcessResult.init(&[1]usize{input.len}, &[1]usize{input.len});
     }
 };
+
+test "GainBlock glides to its target" {
+    const rate: f64 = 48_000;
+    var g = GainBlock.init(0);
+    _ = try g.block.setRate(rate);
+    g.setGain(1);
+
+    var in: [4800]f32 = @splat(1);
+    var out: [4800]f32 = undefined;
+    _ = try g.process(&in, &out);
+
+    // Starts near silence, not at full level, so there's no click.
+    try tst.expect(out[0] < 0.01);
+    // Settled after 100 ms, five time constants.
+    try tst.expectApproxEqAbs(@as(f32, 1), out[4799], 0.01);
+}
 
 // Radio band definitions
 pub const Band =
