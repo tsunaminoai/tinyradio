@@ -287,51 +287,51 @@
         }
       }
     },
-    "zls@latest": {
-      "last_modified": "2026-02-10T02:06:53Z",
-      "resolved": "github:NixOS/nixpkgs/49d75834011c94a120a9cb874ac1c4d8b7bfc767#zls",
+    "zls@0.16.0": {
+      "last_modified": "2026-10-17T03:39:59Z",
+      "resolved": "github:NixOS/nixpkgs/7a6522c868711d06e3a520bbcdfafe9806f4337f#zls",
       "source": "devbox-search",
-      "version": "0.15.1",
+      "version": "0.16.0",
       "systems": {
         "aarch64-darwin": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/n5rzi2lbm7aq0wdhdnl0ssgq8qjpjj2s-zls-0.15.1",
+              "path": "/nix/store/7k2c0il035ain9xph4yjahma2vpmx2hb-zls-0.16.0",
               "default": true
             }
           ],
-          "store_path": "/nix/store/n5rzi2lbm7aq0wdhdnl0ssgq8qjpjj2s-zls-0.15.1"
+          "store_path": "/nix/store/7k2c0il035ain9xph4yjahma2vpmx2hb-zls-0.16.0"
         },
         "aarch64-linux": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/2zp5vf6qb93i54rqbjwsm0x8wbsz50nq-zls-0.15.1",
+              "path": "/nix/store/a9vby2gik9pyq5jccwr3wfqhgawhj285-zls-0.16.0",
               "default": true
             }
           ],
-          "store_path": "/nix/store/2zp5vf6qb93i54rqbjwsm0x8wbsz50nq-zls-0.15.1"
+          "store_path": "/nix/store/a9vby2gik9pyq5jccwr3wfqhgawhj285-zls-0.16.0"
         },
         "x86_64-darwin": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/7i5dw8p3n2phwrgaxfd0nxj883qqpij8-zls-0.15.1",
+              "path": "/nix/store/5bmixbfkgywv2mbclavhz4fi45qga6vl-zls-0.16.0",
               "default": true
             }
           ],
-          "store_path": "/nix/store/7i5dw8p3n2phwrgaxfd0nxj883qqpij8-zls-0.15.1"
+          "store_path": "/nix/store/5bmixbfkgywv2mbclavhz4fi45qga6vl-zls-0.16.0"
         },
         "x86_64-linux": {
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/b18s99b370zf7slw9j7nmvd02nafpijz-zls-0.15.1",
+              "path": "/nix/store/3hnwdx127d1hyfqw5xxgsry9prm5mvg7-zls-0.16.0",
               "default": true
             }
           ],
-          "store_path": "/nix/store/b18s99b370zf7slw9j7nmvd02nafpijz-zls-0.15.1"
+          "store_path": "/nix/store/3hnwdx127d1hyfqw5xxgsry9prm5mvg7-zls-0.16.0"
         }
       }
     }
