@@ -20,6 +20,8 @@ These are included in the devbox shell
 
 ## With Devbox
 
+Install [Devbox](https://www.jetify.com/devbox) and run:
+
 ```bash
 devbox run run
 ```
