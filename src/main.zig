@@ -458,6 +458,19 @@ const RadioTuner = struct {
         const unit_col: u16 = 4 + @as(u16, @intCast(ghost.cols())) + 2;
         writeText(root, unit_col, 4, self.current_band.getUnit(), .{ .fg = Palette.amber, .bg = Palette.glass });
 
+        // RDS: station name and radio text, once the decoder has them.
+        writeText(root, 4, 6, "RDS", .{ .fg = Palette.amber_dim, .bg = Palette.glass });
+        const rds_info = self.receiver.rdsInfo();
+        if (rds_info.pi == 0) {
+            writeText(root, 9, 6, "searching", .{ .fg = Palette.amber_dim, .bg = Palette.glass });
+        } else {
+            const ps = try printable(arena, &rds_info.ps);
+            writeText(root, 9, 6, ps, .{ .fg = Palette.phosphor, .bg = Palette.glass, .bold = true });
+            const rt = try printable(arena, std.mem.trimEnd(u8, &rds_info.rt, " "));
+            const room = size.width -| 20;
+            writeText(root, 20, 6, rt[0..@min(rt.len, room)], .{ .fg = Palette.phosphor, .bg = Palette.glass });
+        }
+
         // Signal and pilot meters.
         const sig_db = self.receiver.signalDb();
         try drawMeter(arena, root, 7, "SIG", normalize(sig_db, -60, 0), .{ .fg = Palette.phosphor, .bg = Palette.glass }, .{ .fg = Palette.phosphor_dim, .bg = Palette.glass });
@@ -804,6 +817,16 @@ const RadioTuner = struct {
 /// Map `v` from [lo, hi] to [0, 1], clamped.
 fn normalize(v: f32, lo: f32, hi: f32) f32 {
     return std.math.clamp((v - lo) / (hi - lo), 0.0, 1.0);
+}
+
+/// Copy `bytes` with anything outside printable ASCII replaced by '.'.
+/// RDS text is untrusted, and undecoded bytes can be anything.
+fn printable(arena: Allocator, bytes: []const u8) ![]u8 {
+    const out = try arena.dupe(u8, bytes);
+    for (out) |*c| {
+        if (c.* < 0x20 or c.* > 0x7e) c.* = '.';
+    }
+    return out;
 }
 
 /// Write `text` one cell per codepoint. Clipped at the surface edge.

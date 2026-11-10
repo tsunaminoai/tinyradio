@@ -8,7 +8,7 @@ const radio = @import("radio");
 const TunerBlock = @import("tuner.zig").TunerBlock;
 const WBFMStereoDemodulatorBlock = @import("stereo.zig").WBFMStereoDemodulatorBlock;
 const Spectrum = @import("spectrum.zig").Spectrum;
-const rds = @import("rds.zig");
+const rds_rx = @import("rds_rx.zig");
 const e = @import("effects.zig");
 const Complex = std.math.Complex(f32);
 
@@ -17,7 +17,7 @@ test {
     _ = @import("decimating_fir.zig");
     _ = @import("stereo.zig");
     _ = @import("spectrum.zig");
-    _ = @import("rds.zig");
+    _ = @import("rds_rx.zig");
     _ = @import("effects.zig");
 }
 
@@ -27,7 +27,6 @@ pub const RadioReceiver = struct {
     flowgraph: radio.Flowgraph,
     source: radio.blocks.RtlSdrSource,
     sink: radio.blocks.PulseAudioSink(2),
-    data_sink: radio.blocks.PrintSink(rds.RDSDecoderBlock.RDSData),
 
     // base nodes
     tuner: TunerBlock(64, 4),
@@ -48,9 +47,8 @@ pub const RadioReceiver = struct {
     am: radio.blocks.AMEnvelopeDemodulatorBlock,
     debug: bool = false,
 
-    // RDS, decoded from the tuner output in stereo FM. Rebuilt on each connect().
-    rds: rds.RDS,
-    rds_initialized: bool = false,
+    // RDS, decoded from the tuner output. Runs on FM bands only.
+    rds: rds_rx.RdsSink,
 
     const tune_offset = -0e3;
 
@@ -62,7 +60,6 @@ pub const RadioReceiver = struct {
             .flowgraph = radio.Flowgraph.init(allocator, io, .{ .debug = debug }),
             .source = undefined,
             .sink = radio.blocks.PulseAudioSink(2).init(),
-            .data_sink = .init(),
             .tuner = .init(tune_offset, 200e3),
             .af_gain_left = GainBlock.init(0.3),
             .af_gain_right = GainBlock.init(0.3),
@@ -73,7 +70,7 @@ pub const RadioReceiver = struct {
             .spectrum = Spectrum.init(),
             .effect = try .init(allocator, 32_000),
             .effect2 = try .init(allocator, 32_000),
-            .rds = undefined,
+            .rds = .init(allocator, 300e3),
 
             .agc = radio.blocks.AGCBlock(f32).init(.{ .preset = .Fast }, .{}),
         };
@@ -86,7 +83,6 @@ pub const RadioReceiver = struct {
     // its buffer a second time.
     pub fn deinit(self: *RadioReceiver) void {
         self.flowgraph.deinit();
-        if (self.rds_initialized) self.rds.deinit();
         self.effect.deinit();
         self.effect2.deinit();
     }
@@ -109,11 +105,6 @@ pub const RadioReceiver = struct {
                 },
             ),
         };
-        if (self.rds_initialized) self.rds.deinit();
-        self.rds = try .init(self.allocator, .{
-            .frequency = @as(f32, @floatCast(self.source.frequency)),
-        });
-        self.rds_initialized = true;
     }
 
     pub fn connect(self: *RadioReceiver, band: Band) !void {
@@ -151,7 +142,6 @@ pub const RadioReceiver = struct {
             .FM_Stereo => {
                 try self.flowgraph.connectPort(&self.tuner.block, "out1", &self.fm_stereo.block, "in1");
                 try self.flowgraph.connectPort(&self.tuner.block, "out1", &self.rds.block, "in1");
-                try self.flowgraph.connectPort(&self.rds.block, "out1", &self.data_sink.block, "in1");
                 try self.flowgraph.connectPort(&self.fm_stereo.block, "out1", &self.af_gain_left.block, "in1");
                 try self.flowgraph.connectPort(&self.fm_stereo.block, "out2", &self.af_gain_right.block, "in1");
                 try self.flowgraph.connectPort(&self.af_gain_left.block, "out1", &self.sink.block, "in1");
@@ -164,6 +154,8 @@ pub const RadioReceiver = struct {
 
     pub fn setFrequency(self: *RadioReceiver, freq_mhz: f32) !void {
         try self.source.setFrequency(freq_mhz * 1e6);
+        // A new station's RDS starts from scratch, not from the last one.
+        self.rds.requestReset();
     }
 
     pub fn setGain(self: *RadioReceiver, linear_gain: f32) !void {
@@ -184,10 +176,9 @@ pub const RadioReceiver = struct {
         return self.power_meter.average_power;
     }
 
-    /// Latest decoded RDS group data, or null before RDS is set up.
-    pub fn getRDSData(self: *RadioReceiver) ?rds.RDSDecoderBlock.RDSData {
-        if (!self.rds_initialized) return null;
-        return self.rds.decoder.getRDSData();
+    /// What RDS has decoded so far: PI code, station name, and radio text.
+    pub fn rdsInfo(self: *const RadioReceiver) rds_rx.RdsInfo {
+        return self.rds.info();
     }
 
     pub fn toggleEffects(self: *RadioReceiver) void {
